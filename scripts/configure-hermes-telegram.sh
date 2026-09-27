@@ -49,10 +49,33 @@ upsert_env TELEGRAM_ALLOWED_USERS "$allowed"
 upsert_env TELEGRAM_HOME_CHANNEL "$home_channel"
 upsert_env TELEGRAM_REACTIONS true   # 👀 while working, 👍 when done
 
-# Progressive replies (edit-in-place is the most predictable transport). Non-secret settings go through Hermes' own CLI.
+# Progressive replies (edit-in-place is the most predictable transport). Some Hermes builds do not
+# accept the legacy `gateway.streaming.*` keys, so we skip them instead of hard-failing the startup.
+# Keep the Telegram platform config in `~/.hermes/.env` and let Hermes load it on startup.
 for setting in "gateway.streaming.enabled true" "gateway.streaming.transport edit"; do
     # shellcheck disable=SC2086
-    "$HERMES_BIN" config set $setting >/dev/null 2>&1 || echo "Telegram: warning - could not set ${setting% *} (continuing)."
+    if ! "$HERMES_BIN" config set $setting >/dev/null 2>&1; then
+        echo "Telegram: legacy setting ${setting% *} is unsupported on this Hermes build (continuing)."
+    fi
+done
+
+# Ensure the API server config is present in the Hermes env file. Newer Hermes builds honor this
+# explicitly and fail the health check when it is missing even if the gateway itself starts.
+for pair in \
+    "API_SERVER_ENABLED=${API_SERVER_ENABLED:-true}" \
+    "API_SERVER_HOST=${API_SERVER_HOST:-127.0.0.1}" \
+    "API_SERVER_PORT=${API_SERVER_PORT:-8642}" \
+    "API_SERVER_KEY=${API_SERVER_KEY:-${HERMES_API_SERVER_KEY:-}}"; do
+    key="${pair%%=*}"
+    value="${pair#*=}"
+    [ -n "$value" ] || continue
+    tmp="$(mktemp "$ENV_FILE.XXXXXX")" || continue
+    if [ -f "$ENV_FILE" ]; then
+        grep -v -E "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_FILE" > "$tmp" || true
+    fi
+    printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    chmod 600 "$tmp"
+    mv "$tmp" "$ENV_FILE"
 done
 
 echo "Telegram: built-in adapter configured (owner IDs: $allowed, home channel: $home_channel)."

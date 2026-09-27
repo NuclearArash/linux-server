@@ -95,6 +95,21 @@ export API_SERVER_PORT="8642"
 export API_SERVER_KEY="${HERMES_API_SERVER_KEY:-}"
 export HERMES_API_SERVER_KEY="$API_SERVER_KEY"
 
+# Herms can accept the API server settings either from the environment or from ~/.hermes/.env.
+# Writing them to the env file makes the newer Hermes builds pick them up reliably before the health
+# check starts.
+mkdir -p "$HERMES_HOME_DIR" && chmod 700 "$HERMES_HOME_DIR"
+if [ -f "$HERMES_HOME_DIR/.env" ]; then
+    tmp="$(mktemp "$HERMES_HOME_DIR/.env.XXXXXX")"
+    grep -v -E '^(API_SERVER_ENABLED|API_SERVER_HOST|API_SERVER_PORT|API_SERVER_KEY|HERMES_API_SERVER_KEY)=' "$HERMES_HOME_DIR/.env" > "$tmp" || true
+    printf 'API_SERVER_ENABLED=true\nAPI_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=8642\nAPI_SERVER_KEY=%s\nHERMES_API_SERVER_KEY=%s\n' "$API_SERVER_KEY" "$API_SERVER_KEY" >> "$tmp"
+    chmod 600 "$tmp"
+    mv "$tmp" "$HERMES_HOME_DIR/.env"
+else
+    printf 'API_SERVER_ENABLED=true\nAPI_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=8642\nAPI_SERVER_KEY=%s\nHERMES_API_SERVER_KEY=%s\n' "$API_SERVER_KEY" "$API_SERVER_KEY" > "$HERMES_HOME_DIR/.env"
+    chmod 600 "$HERMES_HOME_DIR/.env"
+fi
+
 if [ -z "$API_SERVER_KEY" ]; then
     echo "ERROR: HERMES_API_SERVER_KEY is not configured."
     notify_status_failure "<b>Hermes startup failed</b> - API_SERVER_KEY is not configured."
