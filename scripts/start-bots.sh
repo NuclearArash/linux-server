@@ -28,15 +28,28 @@ echo "======================================"
 echo "Starting bots, Panel, Cloudflare Tunnel, and private Tailscale SSH"
 echo "======================================"
 
+bot_enabled() {
+    local bot_key="$1"
+    if [ ! -f "$STATE_FILE" ] || ! command -v jq >/dev/null 2>&1; then
+        return 0
+    fi
+    jq -e --arg key "$bot_key" '(.[$key] == true)' "$STATE_FILE" >/dev/null 2>&1
+}
+
 # Read persistent bot enabled flags
 LOVE_ENABLED=true
 PACK_ENABLED=true
 
-if [ -f "$STATE_FILE" ]; then
-    if command -v jq >/dev/null 2>&1; then
-        LOVE_ENABLED=$(jq -r '."love-whispers" // true' "$STATE_FILE")
-        PACK_ENABLED=$(jq -r '."packtogether" // true' "$STATE_FILE")
-    fi
+if bot_enabled "love-whispers"; then
+    LOVE_ENABLED=true
+else
+    LOVE_ENABLED=false
+fi
+
+if bot_enabled "packtogether"; then
+    PACK_ENABLED=true
+else
+    PACK_ENABLED=false
 fi
 
 # Love Whispers

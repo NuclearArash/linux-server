@@ -69,13 +69,28 @@ echo
 echo "==> Installing Hermes Agent"
 export PATH="$HOME/.local/bin:$HOME/.hermes/bin:$PATH"
 
+HERMES_REPO_DIR="$HERMES_HOME_DIR/hermes-agent"
 HERMES_CACHED=false
-if command -v hermes >/dev/null 2>&1 && [ -d "$HERMES_HOME_DIR/hermes-agent" ]; then
-    HERMES_CACHED=true
-    echo "Hermes installation found in the restored runner cache; skipping update."
+
+if command -v hermes >/dev/null 2>&1 && [ -d "$HERMES_REPO_DIR" ]; then
+    if git -C "$HERMES_REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 && hermes --version >/dev/null 2>&1; then
+        HERMES_CACHED=true
+        echo "Hermes installation found in the restored runner cache; skipping update."
+    else
+        echo "Hermes cache is present but incomplete or corrupted; removing the stale checkout and reinstalling."
+        rm -rf "$HERMES_REPO_DIR"
+        rm -rf "$HERMES_HOME_DIR/bin"
+        rm -f "$HOME/.local/bin/hermes" 2>/dev/null || true
+    fi
 fi
 
 if [ "$HERMES_CACHED" = "false" ]; then
+    if [ -d "$HERMES_REPO_DIR" ]; then
+        echo "Removing stale Hermes checkout before reinstalling."
+        rm -rf "$HERMES_REPO_DIR"
+        rm -rf "$HERMES_HOME_DIR/bin"
+        rm -f "$HOME/.local/bin/hermes" 2>/dev/null || true
+    fi
     echo "No complete cached Hermes installation found; fetching the latest version."
     curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
     export PATH="$HOME/.local/bin:$HOME/.hermes/bin:$PATH"

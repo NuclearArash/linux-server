@@ -224,7 +224,6 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
     box-shadow: 0 0 24px rgba(var(--tone), .14);
 }
 
-/* Shared look for text inputs, selects and the chat textarea */
 .field {
     padding: 6px 10px;
     border: 1px solid var(--border-light);
@@ -239,6 +238,7 @@ select.field { cursor: pointer; }
 /* 5. Metrics & bot fleet ---------------------------------------------------- */
 .metric-card {
     min-height: 144px;
+    height: 100%;
     padding: 17px 18px 15px;
     transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
@@ -260,6 +260,44 @@ select.field { cursor: pointer; }
 .metric-value--small { font-size: 13px; }
 .metric-detail { margin-top: 5px; color: #5f6d81; font-family: var(--mono); font-size: 10px; }
 .metric-detail .btn { margin-top: 5px; }
+.fleet-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+}
+.fleet-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-family: var(--mono);
+    font-size: 9px;
+    line-height: 1;
+    letter-spacing: .04em;
+    font-weight: 700;
+}
+.fleet-pill::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.fleet-pill--online {
+    background: rgba(57, 230, 161, .08);
+    border-color: rgba(57, 230, 161, .18);
+    color: var(--green);
+}
+.fleet-pill--online::before { background: var(--green); box-shadow: 0 0 8px rgba(52, 211, 153, .7); }
+.fleet-pill--offline {
+    background: rgba(255, 107, 129, .06);
+    border-color: rgba(255, 107, 129, .18);
+    color: var(--red);
+}
+.fleet-pill--offline::before { background: var(--red); }
 .progress {
     height: 5px;
     margin-top: 16px;
@@ -1013,8 +1051,10 @@ select.field { cursor: pointer; }
                     <div class="metric-icon">📡</div>
                 </div>
                 <div class="metric-value" id="fleet-val">0 / 2</div>
-                <div class="metric-detail">bots online</div>
-                <div class="progress"><div id="fleet-progress"></div></div>
+                <div class="fleet-summary">
+                    <span class="fleet-pill fleet-pill--online" id="fleet-online-pill" style="display: none;">0 online</span>
+                    <span class="fleet-pill fleet-pill--offline" id="fleet-offline-pill" style="display: inline-flex;">2 stopped</span>
+                </div>
             </div>
 
             <div class="panel metric-card">
@@ -1093,7 +1133,7 @@ select.field { cursor: pointer; }
                     <div class="console-tabs">
                         <button class="tab-btn" type="button" data-tab="assistant">Server Assistant</button>
                         <button class="tab-btn active" type="button" data-tab="logs">Logs</button>
-                        <button class="tab-btn" type="button" data-tab="env">Environment</button>
+                        <button class="tab-btn" type="button" data-tab="env">Env. Variables</button>
                         <button class="tab-btn" type="button" data-tab="files">File Explorer</button>
                     </div>
                 </div>
@@ -1101,9 +1141,7 @@ select.field { cursor: pointer; }
                     <select id="bot-select" class="bot-select field">
                         <option value="love-whispers">Love Whispers</option>
                         <option value="packtogether">PackTogether</option>
-                        <option value="panel">Management Panel</option>
-                        <option value="hermes">Hermes Gateway</option>
-                        <option value="9router">9Router</option>
+                        <option value="server-secrets">Server Secrets</option>
                     </select>
                 </div>
             </div>
@@ -1763,13 +1801,13 @@ function setConnection(online) {
     $('connection-status').textContent = online ? 'CONNECTED' : 'OFFLINE';
 }
 
-/** Start is only usable while a bot is stopped, Stop only while it runs; all three lock during a request. */
+/** Start is only usable while a bot is stopped, Restart/Stop only while it runs; all three lock during a request. */
 function syncBotButtons(key) {
     const running = !!state.bots[key]?.running;
     const busy = state.pendingBots.has(key);
     document.querySelectorAll(`[data-bot="${key}"][data-action]`).forEach(button => {
         const { action } = button.dataset;
-        button.disabled = busy || (action === 'start' && running) || (action === 'stop' && !running);
+        button.disabled = busy || (action === 'start' && running) || (action === 'restart' && !running) || (action === 'stop' && !running);
     });
 }
 
@@ -1798,8 +1836,17 @@ async function refreshStatus() {
         $('ram-val').textContent = `${system.ram_used_gb} GB`;
         $('ram-detail').textContent = `${system.ram_used_gb} / ${system.ram_total_gb} GB`;
         $('ram-progress').style.width = `${system.ram_percent}%`;
-        $('fleet-val').textContent = `${fleet.online} / ${fleet.total}`;
-        $('fleet-progress').style.width = `${fleet.total ? (fleet.online / fleet.total) * 100 : 0}%`;
+
+        const onlineBots = Number(fleet.online) || 0;
+        const totalBots = Number(fleet.total) || 0;
+        const stoppedBots = Math.max(totalBots - onlineBots, 0);
+
+        $('fleet-val').textContent = `${onlineBots} / ${totalBots}`;
+        $('fleet-online-pill').textContent = `${onlineBots} online`;
+        $('fleet-online-pill').style.display = onlineBots > 0 ? 'inline-flex' : 'none';
+        $('fleet-offline-pill').textContent = `${stoppedBots} stopped`;
+        $('fleet-offline-pill').style.display = stoppedBots > 0 ? 'inline-flex' : 'none';
+
         $('uptime-val').textContent = `Uptime: ${system.uptime}`;
         $('ssh-val').textContent = system.ssh_command;
         state.sshCommand = system.ssh_command;

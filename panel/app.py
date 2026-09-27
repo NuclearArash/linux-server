@@ -79,6 +79,17 @@ BOTS = {
     }
 }
 
+SERVER_SECRET_KEYS = [
+    "SERVER_USERNAME",
+    "SERVER_PASSWORD",
+    "STATUS_BOT_TOKEN",
+    "STATUS_CHAT_ID",
+    "HERMES_API_SERVER_KEY",
+    "HERMES_TELEGRAM_BOT_TOKEN",
+    "API_KEY_9ROUTER",
+    "TAILSCALE_AUTHKEY",
+]
+
 RESTART_COUNTS = {
     "love-whispers": 0,
     "packtogether": 0
@@ -799,13 +810,17 @@ def get_logs(bot_key):
             return jsonify({"error": str(e)}), 500
     return jsonify({"logs": "Log file not found or empty.", "total_lines": 0})
 
-@app.route("/api/env/<bot_key>")
+@app.route("/api/env/<env_key>")
 @login_required
-def get_env(bot_key):
-    if bot_key not in BOTS:
-        return jsonify({"error": "Unknown bot"}), 404
-    
-    env_path = os.path.join(BOTS[bot_key]["dir"], ".env")
+def get_env(env_key):
+    if env_key == "server-secrets":
+        values = {key: os.environ.get(key, "") for key in SERVER_SECRET_KEYS if os.environ.get(key) is not None}
+        return jsonify({"env": values, "count": len(values)})
+
+    if env_key not in BOTS:
+        return jsonify({"error": "Unknown environment target"}), 404
+
+    env_path = os.path.join(BOTS[env_key]["dir"], ".env")
     env_vars = {}
     if os.path.exists(env_path):
         with open(env_path, "r") as f:
