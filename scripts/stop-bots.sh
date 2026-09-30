@@ -42,10 +42,13 @@ stop_process() {
     rm -f "$PID_FILE"
 }
 
-stop_process "Love Whispers" "/tmp/love-whispers.pid"
-stop_process "PackTogether" "/tmp/packtogether.pid"
+for pid_file in /tmp/bot-*.pid; do
+    if [ -f "$pid_file" ]; then
+        stop_process "Dynamic Bot" "$pid_file"
+    fi
+done
+
 stop_process "Hermes Agent (supervisor)" "/tmp/hermes.pid"
-# A gateway that restarted itself (in-chat /restart) is not tracked by the PID file.
 pkill -TERM -f "hermes gateway" 2>/dev/null || true
 stop_process "Management Panel" "/tmp/panel.pid"
 stop_process "Cloudflare Tunnel" "/tmp/cloudflared.pid"
@@ -54,7 +57,7 @@ if command -v docker >/dev/null 2>&1; then
     docker stop 9router >/dev/null 2>&1 || sudo -n docker stop 9router >/dev/null 2>&1 || true
 fi
 
-rm -f /tmp/panel_url.txt /tmp/cloudflared.url /tmp/ssh_cmd.txt /tmp/cloudflared.log /tmp/hermes_bot.txt
+rm -f /tmp/panel_url.txt /tmp/cloudflared.url /tmp/ssh_cmd.txt /tmp/cloudflared.log /tmp/hermes_bot.txt /tmp/bot-*.pid /tmp/bot-*.log
 
 echo
 echo "All processes stopped."

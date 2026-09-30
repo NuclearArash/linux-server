@@ -7,11 +7,10 @@ BASE_DIR="$HOME/bot-server"
 BOT_DIR="$BASE_DIR/bots"
 PANEL_DIR="$BASE_DIR/panel"
 STATE_FILE="$BASE_DIR/state.json"
+BOT_REGISTRY_PATH="${BOT_REGISTRY_PATH:-$BASE_DIR/bot-registry.json}"
+BOT_CREDENTIALS_KEY_PATH="${BOT_CREDENTIALS_KEY_PATH:-$BASE_DIR/.bot_credentials_key}"
 HERMES_HOME_DIR="$HOME/.hermes"
 NINEROUTER_HOME_DIR="$HOME/.9router"
-
-LOVE_WHISPERS_DIR="$BOT_DIR/love-whispers-bot"
-PACKTOGETHER_DIR="$BOT_DIR/PackTogether"
 
 notify_status_failure() {
     local MESSAGE="$1"
@@ -24,65 +23,101 @@ notify_status_failure() {
     fi
 }
 
-echo "======================================"
-echo "Starting bots, Panel, Cloudflare Tunnel, and private Tailscale SSH"
-echo "======================================"
-
-bot_enabled() {
-    local bot_key="$1"
-    if [ ! -f "$STATE_FILE" ] || ! command -v jq >/dev/null 2>&1; then
+start_registry_bots() {
+    if [ ! -f "$BOT_REGISTRY_PATH" ] || [ ! -d "$BOT_DIR" ]; then
+        echo "No bot registry found; skipping automatic bot startup."
         return 0
     fi
-    jq -e --arg key "$bot_key" '(.[$key] == true)' "$STATE_FILE" >/dev/null 2>&1
+
+    export BOT_REGISTRY_PATH
+    export BOT_CREDENTIALS_KEY_PATH
+    export BOT_CREDENTIALS_KEY="$(tr -d '\n' < "$BOT_CREDENTIALS_KEY_PATH" 2>/dev/null || true)"
+
+    "$PANEL_DIR/.venv/bin/python" - "$BOT_REGISTRY_PATH" "$BOT_DIR" "$BOT_CREDENTIALS_KEY_PATH" <<'PY'
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from cryptography.fernet import Fernet, InvalidToken
+
+registry_path = Path(sys.argv[1])
+bots_dir = Path(sys.argv[2])
+key_path = Path(sys.argv[3])
+
+try:
+    registry = json.loads(registry_path.read_text(encoding='utf-8')) if registry_path.exists() else {"bots": []}
+except Exception:
+    registry = {"bots": []}
+
+key = key_path.read_text(encoding='utf-8').strip() if key_path.exists() else ""
+if not key:
+    raise SystemExit(0)
+
+cipher = Fernet(key.encode('ascii'))
+for definition in registry.get("bots", []):
+    if not definition.get("enabled"):
+        continue
+    bot_id = definition.get("id")
+    if not bot_id:
+        continue
+
+    repo_dir = bots_dir / bot_id
+    if not repo_dir.is_dir():
+        continue
+
+    entrypoint = definition.get("entrypoint", "")
+    if not entrypoint:
+        continue
+
+    entry_path = (repo_dir / entrypoint).resolve()
+    if not entry_path.is_file():
+        continue
+
+    venv_python = repo_dir / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not venv_python.exists():
+        continue
+
+    pid_path = Path("/tmp") / f"bot-{bot_id}.pid"
+    if pid_path.exists():
+        continue
+
+    env = os.environ.copy()
+    env["PATH"] = os.pathsep.join((str(venv_python.parent), env.get("PATH", "")))
+    env["HOME"] = os.path.expanduser("~")
+    env["USER"] = os.environ.get("USER", "runner")
+    env["LANG"] = "C.UTF-8"
+    env["VIRTUAL_ENV"] = str(venv_python.parent.parent)
+
+    encrypted = registry.get("encrypted_credentials", {}).get(bot_id)
+    if encrypted:
+        try:
+            credentials = json.loads(cipher.decrypt(encrypted.encode('ascii')).decode('utf-8'))
+            env.update(credentials.get("environment", {}))
+        except (InvalidToken, ValueError, TypeError, UnicodeDecodeError):
+            pass
+
+    log_path = Path("/tmp") / f"bot-{bot_id}.log"
+    with log_path.open("ab") as log_file:
+        process = subprocess.Popen(
+            [str(venv_python), '-u', str(entry_path)],
+            cwd=str(repo_dir),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    pid_path.write_text(str(process.pid), encoding='ascii')
+    print(f"Started bot {bot_id} with PID {process.pid}")
+PY
 }
 
-# Read persistent bot enabled flags
-LOVE_ENABLED=true
-PACK_ENABLED=true
+echo "======================================"
+echo "Starting bot fleet, Panel, Cloudflare Tunnel, and private Tailscale SSH"
+echo "======================================"
 
-if bot_enabled "love-whispers"; then
-    LOVE_ENABLED=true
-else
-    LOVE_ENABLED=false
-fi
-
-if bot_enabled "packtogether"; then
-    PACK_ENABLED=true
-else
-    PACK_ENABLED=false
-fi
-
-# Love Whispers
-echo
-if [ "$LOVE_ENABLED" = "true" ]; then
-    echo "==> Starting Love Whispers (State: Enabled)"
-    cd "$LOVE_WHISPERS_DIR"
-    source .venv/bin/activate
-    nohup python -u bot.py > /tmp/love-whispers.log 2>&1 &
-    LOVE_PID=$!
-    echo "$LOVE_PID" > /tmp/love-whispers.pid
-    deactivate
-    echo "Love Whispers PID: $LOVE_PID"
-else
-    echo "==> Love Whispers is DISABLED in saved state (Skipping startup)"
-    rm -f /tmp/love-whispers.pid
-fi
-
-# PackTogether
-echo
-if [ "$PACK_ENABLED" = "true" ]; then
-    echo "==> Starting PackTogether (State: Enabled)"
-    cd "$PACKTOGETHER_DIR"
-    source .venv/bin/activate
-    nohup python -u packtogether/bot.py > /tmp/packtogether.log 2>&1 &
-    PACK_PID=$!
-    echo "$PACK_PID" > /tmp/packtogether.pid
-    deactivate
-    echo "PackTogether PID: $PACK_PID"
-else
-    echo "==> PackTogether is DISABLED in saved state (Skipping startup)"
-    rm -f /tmp/packtogether.pid
-fi
+start_registry_bots
 
 # Hermes Agent API and gateway
 echo
@@ -95,9 +130,6 @@ export API_SERVER_PORT="8642"
 export API_SERVER_KEY="${HERMES_API_SERVER_KEY:-}"
 export HERMES_API_SERVER_KEY="$API_SERVER_KEY"
 
-# Herms can accept the API server settings either from the environment or from ~/.hermes/.env.
-# Writing them to the env file makes the newer Hermes builds pick them up reliably before the health
-# check starts.
 mkdir -p "$HERMES_HOME_DIR" && chmod 700 "$HERMES_HOME_DIR"
 if [ -f "$HERMES_HOME_DIR/.env" ]; then
     tmp="$(mktemp "$HERMES_HOME_DIR/.env.XXXXXX")"
@@ -121,8 +153,6 @@ if ! command -v hermes >/dev/null 2>&1; then
     exit 1
 fi
 
-# Hermes' built-in Telegram adapter is configured from the HERMES_TELEGRAM_* secrets before the gateway
-# starts. A Telegram problem is never fatal: the panel, tunnel and SSH must still come up.
 TELEGRAM_RC=0
 "$SCRIPT_DIR/configure-hermes-telegram.sh" || TELEGRAM_RC=$?
 if [ "$TELEGRAM_RC" -eq 0 ]; then
@@ -138,11 +168,8 @@ if [ "$TELEGRAM_RC" -eq 0 ]; then
 elif [ -n "${HERMES_TELEGRAM_BOT_TOKEN:-}" ]; then
     notify_status_failure "<b>Hermes Telegram is not configured</b> - HERMES_TELEGRAM_BOT_TOKEN is set but the owner user ID is missing or invalid (set HERMES_TELEGRAM_ALLOWED_USERS). The server itself started normally."
 fi
-unset HERMES_TELEGRAM_BOT_TOKEN HERMES_TELEGRAM_ALLOWED_USERS HERMES_TELEGRAM_HOME_CHANNEL   # nothing else needs them
+unset HERMES_TELEGRAM_BOT_TOKEN HERMES_TELEGRAM_ALLOWED_USERS HERMES_TELEGRAM_HOME_CHANNEL
 
-# The agent's terminal inherits the gateway's environment, so it gets a minimal one: no deploy secrets
-# (GH_PAT, TAILSCALE_AUTHKEY, bot tokens, ...). Provider and Telegram credentials live in ~/.hermes/.env.
-# The supervisor restarts the gateway when it exits (Hermes' in-chat /restart, crashes).
 nohup env -i PATH="$PATH" HOME="$HOME" USER="${USER:-$(id -un)}" LANG="C.UTF-8" \
     HERMES_HOME="$HERMES_HOME" API_SERVER_ENABLED="$API_SERVER_ENABLED" \
     API_SERVER_HOST="$API_SERVER_HOST" API_SERVER_PORT="$API_SERVER_PORT" \
@@ -173,7 +200,6 @@ if [ "$HERMES_READY" != "true" ]; then
 fi
 echo "Hermes Agent PID: $HERMES_PID (API 127.0.0.1:8642)"
 
-# 9Router OpenAI-compatible gateway
 echo
 echo "==> Starting 9Router"
 if ! command -v docker >/dev/null 2>&1; then
@@ -220,9 +246,6 @@ echo "9Router ready at http://127.0.0.1:20128 (dashboard /dashboard, API /v1)"
 MODEL_STATUS=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:20128/v1/models 2>/dev/null || true)
 echo "9Router model endpoint HTTP status: ${MODEL_STATUS:-unavailable}"
 
-# Keep the dashboard password aligned with the SSH/server password. The
-# supported local reset clears only the stored dashboard hash; provider data
-# and usage history remain in the persistent SQLite database.
 NINEROUTER_RESET=$("${DOCKER[@]}" exec 9router node -e \
     "fetch('http://127.0.0.1:20128/api/auth/reset-password',{method:'POST'}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
     >/dev/null 2>&1; echo $?)
@@ -232,7 +255,6 @@ else
     echo "WARNING: Could not reset the 9Router dashboard password from inside the container."
 fi
 
-# Setup OpenSSH Server
 echo
 echo "==> Configuring OpenSSH Server"
 sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
@@ -248,7 +270,6 @@ echo "$SSH_USER:$SSH_PASS" | sudo chpasswd
 sudo usermod -aG sudo "$SSH_USER" 2>/dev/null || true
 echo "$SSH_USER ALL=(ALL) NOPASSWD:ALL" | sudo tee "/etc/sudoers.d/$SSH_USER" >/dev/null
 
-# Management Panel
 echo
 echo "==> Starting Management Panel GUI"
 
@@ -262,6 +283,9 @@ export STATUS_BOT_TOKEN="${STATUS_BOT_TOKEN:-}"
 export STATUS_CHAT_ID="${STATUS_CHAT_ID:-}"
 export GITHUB_REPO="${GITHUB_REPO:-ArashAtomic/linux-server}"
 export GITHUB_REF_NAME="${GITHUB_REF_NAME:-main}"
+export BOT_REGISTRY_PATH
+export BOT_CREDENTIALS_KEY_PATH
+export BOT_CREDENTIALS_KEY="$(tr -d '\n' < "$BOT_CREDENTIALS_KEY_PATH")"
 
 nohup python -u app.py > /tmp/panel.log 2>&1 &
 PANEL_PID=$!
@@ -270,12 +294,9 @@ deactivate
 
 echo "Management Panel PID: $PANEL_PID (Port 8080)"
 
-# Start Cloudflare Tunnel for Web Panel
 echo
 echo "==> Starting Cloudflare Tunnel for Web Panel"
-rm -f /tmp/cloudflared.url /tmp/panel_url.txt /tmp/ssh_cmd.txt
-rm -f /tmp/cloudflared.log
-
+rm -f /tmp/cloudflared.url /tmp/panel_url.txt /tmp/ssh_cmd.txt /tmp/cloudflared.log
 CF_PID=""
 for attempt in 1 2 3; do
     echo "Starting Cloudflare Quick Tunnel (attempt $attempt/3)..."
@@ -311,25 +332,20 @@ else
     echo "Cloudflare URL unavailable; inspect /tmp/cloudflared.log" > /tmp/panel_url.txt
 fi
 
-# Connect Tailscale for private SSH access over the tailnet
 echo
 echo "==> Connecting Tailscale"
-
 if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
     sudo tailscale up --authkey="$TAILSCALE_AUTHKEY" --hostname="bot-server" --accept-routes || true
 else
     echo "WARNING: TAILSCALE_AUTHKEY is not configured."
 fi
 
-# Remove Funnel state left by older deployments before enabling private SSH.
 sudo systemctl disable --now tailscale-funnel.service 2>/dev/null || true
 sudo rm -f /etc/systemd/system/tailscale-funnel.service
 sudo systemctl daemon-reload 2>/dev/null || true
 sudo tailscale funnel off 2>/dev/null || true
 
-# Verify Tailscale status
 tailscale status || true
-
 TS_DOMAIN=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//' || true)
 if [ -z "$TS_DOMAIN" ]; then
     TS_DOMAIN=$(tailscale status 2>/dev/null | grep -v '#' | awk 'NR==1 {print $2}' || true)
@@ -337,7 +353,6 @@ fi
 
 echo "Tailscale Domain: ${TS_DOMAIN:-unknown}"
 
-# SSH remains on port 22 and is reachable through Tailscale MagicDNS only.
 TS_IP=$(tailscale ip -4 2>/dev/null | head -n 1 || true)
 if [ -n "$TS_IP" ]; then
     printf 'ListenAddress %s\n' "$TS_IP" | sudo tee /etc/ssh/sshd_config.d/tailscale.conf >/dev/null
@@ -357,7 +372,6 @@ echo
 echo "==> Tailscale Status:"
 tailscale status || true
 
-# Construct private tailnet SSH command & Panel URL
 if [ -n "$TS_IP" ]; then
     SSH_CMD="ssh $SSH_USER@$TS_IP"
     echo "$SSH_CMD" > /tmp/ssh_cmd.txt
@@ -375,18 +389,6 @@ echo "Web Panel URL : $(cat /tmp/panel_url.txt)"
 echo "SSH Command   : $(cat /tmp/ssh_cmd.txt)"
 
 sleep 2
-
-if [ "$LOVE_ENABLED" = "true" ] && [ -n "${LOVE_PID:-}" ]; then
-    echo
-    echo "Love Whispers:"
-    ps -p "$LOVE_PID" -o pid,etime,cmd || true
-fi
-
-if [ "$PACK_ENABLED" = "true" ] && [ -n "${PACK_PID:-}" ]; then
-    echo
-    echo "PackTogether:"
-    ps -p "$PACK_PID" -o pid,etime,cmd || true
-fi
 
 echo
 echo "Management Panel:"

@@ -3,6 +3,9 @@ import re
 import time
 import signal
 import secrets
+import shutil
+import sys
+from html import escape
 import threading
 import subprocess
 import json
@@ -15,12 +18,43 @@ import psutil
 import requests
 import yaml
 from urllib.parse import urlparse
+from cryptography.fernet import Fernet
+
+try:
+    from .bot_registry import get_bot_credentials, load_registry, save_registry, set_bot_credentials, validate_bot_definition
+except ImportError:
+    from bot_registry import get_bot_credentials, load_registry, save_registry, set_bot_credentials, validate_bot_definition
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32))
 
 BASE_DIR = os.path.expanduser("~/bot-server")
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
+BOT_REGISTRY_PATH = os.environ.get("BOT_REGISTRY_PATH", os.path.join(BASE_DIR, "bot-registry.json"))
+BOT_CREDENTIALS_KEY_PATH = os.environ.get("BOT_CREDENTIALS_KEY_PATH", os.path.join(BASE_DIR, ".bot_credentials_key"))
+
+
+def ensure_bot_credentials_key():
+    key = os.environ.get("BOT_CREDENTIALS_KEY", "").strip()
+    if key:
+        return key
+    key_path = BOT_CREDENTIALS_KEY_PATH
+    os.makedirs(os.path.dirname(key_path), exist_ok=True)
+    try:
+        with open(key_path, "r", encoding="utf-8") as key_file:
+            key = key_file.read().strip()
+        if key:
+            return key
+    except OSError:
+        pass
+    key = Fernet.generate_key().decode("ascii")
+    with open(key_path, "w", encoding="utf-8") as key_file:
+        key_file.write(key + "\n")
+    os.chmod(key_path, 0o600)
+    return key
+
+
+BOT_CREDENTIALS_KEY = ensure_bot_credentials_key()
 START_TIME = time.time()
 HERMES_API_URL = os.environ.get("HERMES_API_URL", "http://127.0.0.1:8642")
 HERMES_API_KEY = os.environ.get("HERMES_API_SERVER_KEY", "")
@@ -60,25 +94,6 @@ def get_hermes_model():
         pass
     return HERMES_MODEL
 
-BOTS = {
-    "love-whispers": {
-        "name": "Love Whispers",
-        "icon": "❤️",
-        "dir": os.path.join(BASE_DIR, "bots/love-whispers-bot"),
-        "entry": "bot.py",
-        "pid_path": "/tmp/love-whispers.pid",
-        "log_path": "/tmp/love-whispers.log"
-    },
-    "packtogether": {
-        "name": "PackTogether",
-        "icon": "🎒",
-        "dir": os.path.join(BASE_DIR, "bots/PackTogether"),
-        "entry": "packtogether/bot.py",
-        "pid_path": "/tmp/packtogether.pid",
-        "log_path": "/tmp/packtogether.log"
-    }
-}
-
 SERVER_SECRET_KEYS = [
     "SERVER_USERNAME",
     "SERVER_PASSWORD",
@@ -90,35 +105,181 @@ SERVER_SECRET_KEYS = [
     "TAILSCALE_AUTHKEY",
 ]
 
-RESTART_COUNTS = {
-    "love-whispers": 0,
-    "packtogether": 0
-}
+BOT_RESTART_COUNTS = {}
+BOT_REGISTRY_LOCK = Lock()
+BOT_INSTALL_JOBS = {}
+BOT_INSTALL_JOBS_LOCK = Lock()
 
-def load_bot_state():
-    state = {"love-whispers": True, "packtogether": True}
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r") as f:
-                saved = json.load(f)
-                if isinstance(saved, dict):
-                    state.update(saved)
-        except Exception:
-            pass
-    return state
 
-def save_bot_state(state):
+def generate_bot_id():
+    return secrets.token_hex(16)
+
+
+def parse_environment_assignments(raw_environment):
+    if raw_environment is None:
+        return {}
+    if isinstance(raw_environment, dict):
+        environment = dict(raw_environment)
+    elif isinstance(raw_environment, str):
+        raw_text = raw_environment.strip()
+        if not raw_text:
+            return {}
+        environment = {}
+        pattern = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)(?=(?:\s+[A-Za-z_][A-Za-z0-9_]*\s*=)|\s*$)", re.DOTALL)
+        matches = list(pattern.finditer(raw_text))
+        if not matches:
+            raise ValueError("Environment variables must use KEY=value syntax")
+        for match in matches:
+            key = match.group(1)
+            value = match.group(2).strip()
+            if not key or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                raise ValueError(f"Environment variable name is invalid: {key!r}")
+            environment[key] = value
+    else:
+        raise ValueError("Environment values must be a mapping or KEY=value string")
+
+    for key, value in environment.items():
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise ValueError(f"Environment variable name is invalid: {key!r}")
+        if not isinstance(value, str) or "\n" in value or "\r" in value:
+            raise ValueError(f"Environment variable value is invalid for {key!r}")
+    return environment
+
+
+def _record_bot_job(job_id, status, progress, message, **extra):
+    with BOT_INSTALL_JOBS_LOCK:
+        job = BOT_INSTALL_JOBS.setdefault(job_id, {})
+        job.update({
+            "id": job_id,
+            "status": status,
+            "progress": progress,
+            "message": message,
+            **extra,
+        })
+        return job
+
+
+def _run_install_command(command, cwd=None):
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(stderr or f"Command failed: {' '.join(command)}")
+    return completed
+
+
+def _clone_bot_repository(job_id, definition, pat):
+    repo_dir = os.path.join(BASE_DIR, "bots", definition["id"])
+    os.makedirs(os.path.dirname(repo_dir), exist_ok=True)
+    if os.path.exists(repo_dir):
+        shutil.rmtree(repo_dir)
+
+    repository_url = definition["repository"]
+    if pat:
+        parsed = urllib.parse.urlsplit(repository_url)
+        if parsed.scheme != "https" or parsed.hostname != "github.com":
+            raise ValueError("Private bot repositories must use a GitHub HTTPS URL")
+        safe_pat = urllib.parse.quote(pat, safe="")
+        repository_url = f"https://{safe_pat}@github.com{parsed.path}"
+
+    _record_bot_job(job_id, "running", 15, "Cloning repository...", step="clone")
+    _run_install_command(["git", "clone", "--depth", "1", "--branch", definition["ref"], repository_url, repo_dir])
+    if not os.path.isdir(repo_dir):
+        raise RuntimeError("Repository clone did not produce a working directory")
+
+
+def _install_bot_dependencies(job_id, definition):
+    repo_dir = os.path.join(BASE_DIR, "bots", definition["id"])
+    venv_dir = os.path.join(repo_dir, ".venv")
+    py_executable = os.path.join(venv_dir, "Scripts", "python.exe") if os.name == "nt" else os.path.join(venv_dir, "bin", "python")
+    if not os.path.exists(py_executable):
+        _record_bot_job(job_id, "running", 35, "Creating virtual environment...", step="venv")
+        _run_install_command([sys.executable, "-m", "venv", venv_dir])
+
+    requirements_path = os.path.join(repo_dir, "requirements.txt")
+    pyproject_path = os.path.join(repo_dir, "pyproject.toml")
+    setup_py_path = os.path.join(repo_dir, "setup.py")
+
+    if os.path.exists(requirements_path):
+        _record_bot_job(job_id, "running", 60, "Installing Python dependencies...", step="deps")
+        _run_install_command([py_executable, "-m", "pip", "install", "--disable-pip-version-check", "-r", requirements_path])
+    elif os.path.exists(pyproject_path) or os.path.exists(setup_py_path):
+        _record_bot_job(job_id, "running", 60, "Installing package in editable mode...", step="deps")
+        _run_install_command([py_executable, "-m", "pip", "install", "--disable-pip-version-check", "-e", repo_dir])
+
+
+def _validate_repo_entrypoint(repo_dir, entrypoint):
+    relative_parts = [part for part in entrypoint.split("/") if part not in {"", "."}]
+    resolved_path = os.path.realpath(os.path.join(repo_dir, *relative_parts))
+    repo_root = os.path.realpath(repo_dir)
     try:
-        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-        with open(STATE_FILE, "w") as f:
-            json.dump(state, f, indent=2)
-    except Exception as e:
-        print(f"Failed to save state: {e}")
+        is_within_repo = os.path.commonpath([repo_root, resolved_path]) == repo_root
+    except ValueError:
+        is_within_repo = False
+    if not is_within_repo or not os.path.isfile(resolved_path):
+        raise FileNotFoundError("Bot entrypoint is missing or outside the repository")
+    return resolved_path
+
+
+def _run_bot_install(job_id, definition, pat, environment):
+    job = BOT_INSTALL_JOBS.get(job_id)
+    if not job:
+        return
+
+    try:
+        if not BOT_CREDENTIALS_KEY:
+            raise RuntimeError("Bot credential encryption key is not configured")
+        _clone_bot_repository(job_id, definition, pat)
+        _install_bot_dependencies(job_id, definition)
+        repo_dir = os.path.join(BASE_DIR, "bots", definition["id"])
+        _validate_repo_entrypoint(repo_dir, definition["entrypoint"])
+        with BOT_REGISTRY_LOCK:
+            registry = get_bot_registry()
+            if not any(bot["id"] == definition["id"] for bot in registry["bots"]):
+                registry["bots"].append(definition)
+                save_registry(BOT_REGISTRY_PATH, registry)
+            credentials = {"pat": pat or "", "environment": environment}
+            set_bot_credentials(registry, definition["id"], credentials, BOT_CREDENTIALS_KEY)
+            save_registry(BOT_REGISTRY_PATH, registry)
+        _record_bot_job(job_id, "success", 100, "Bot installed successfully.", step="complete", bot_id=definition["id"])
+    except Exception as error:
+        _record_bot_job(job_id, "failed", 100, str(error) or "Bot installation failed.", step="error", error=str(error))
+
+
+def get_bot_registry():
+    return load_registry(BOT_REGISTRY_PATH)
+
+
+def get_bot_definition(bot_key, registry=None):
+    registry = registry if registry is not None else get_bot_registry()
+    return next((bot for bot in registry["bots"] if bot["id"] == bot_key), None)
+
+
+def get_bot_info(definition):
+    bot_dir = os.path.join(BASE_DIR, "bots", definition["id"])
+    return {
+        **definition,
+        "dir": bot_dir,
+        "entry": definition["entrypoint"],
+        "pid_path": os.path.join("/tmp", f"bot-{definition['id']}.pid"),
+        "log_path": os.path.join("/tmp", f"bot-{definition['id']}.log"),
+        "venv_python": os.path.join(bot_dir, ".venv", "bin", "python"),
+    }
+
 
 def set_bot_enabled(bot_key, enabled):
-    state = load_bot_state()
-    state[bot_key] = bool(enabled)
-    save_bot_state(state)
+    with BOT_REGISTRY_LOCK:
+        registry = get_bot_registry()
+        definition = get_bot_definition(bot_key, registry)
+        if definition is None:
+            raise ValueError("Unknown bot ID")
+        definition["enabled"] = bool(enabled)
+        save_registry(BOT_REGISTRY_PATH, registry)
 
 def get_auth_credentials():
     user = os.environ.get("SERVER_USERNAME", "admin")
@@ -247,7 +408,10 @@ app.register_blueprint(create_assistant_blueprint(login_required, restart_hermes
 
 
 def get_bot_proc(bot_key):
-    pid_path = BOTS[bot_key]["pid_path"]
+    definition = get_bot_definition(bot_key)
+    if definition is None:
+        return None
+    pid_path = get_bot_info(definition)["pid_path"]
     if os.path.exists(pid_path):
         try:
             with open(pid_path, "r") as f:
@@ -259,6 +423,24 @@ def get_bot_proc(bot_key):
         except Exception:
             pass
     return None
+
+
+def get_bot_statuses(registry=None):
+    registry = registry if registry is not None else get_bot_registry()
+    statuses = {}
+    for definition in registry["bots"]:
+        bot_id = definition["id"]
+        proc = get_bot_proc(bot_id)
+        running = proc is not None
+        statuses[bot_id] = {
+            "name": definition["name"],
+            "icon": definition.get("icon") or "🤖",
+            "running": running,
+            "pid": proc.pid if running else "—",
+            "uptime": format_uptime(time.time() - proc.create_time()) if running else "—",
+            "restarts": BOT_RESTART_COUNTS.get(bot_id, 0),
+        }
+    return statuses
 
 def get_panel_url():
     if os.path.exists("/tmp/panel_url.txt"):
@@ -406,17 +588,21 @@ def telegram_poll_worker():
                         cf_url = get_panel_url()
                         ssh_cmd = get_ssh_cmd()
                         
-                        b1 = "🟢 RUNNING" if get_bot_proc("love-whispers") else "🔴 STOPPED"
-                        b2 = "🟢 RUNNING" if get_bot_proc("packtogether") else "🔴 STOPPED"
-                        
+                        bot_registry = get_bot_registry()
+                        bot_lines = [
+                            f"{escape(bot.get('name', 'Bot'))}: "
+                            f"{'🟢 RUNNING' if get_bot_proc(bot['id']) else '🔴 STOPPED'}"
+                            for bot in bot_registry["bots"]
+                        ]
+                        bots_text = "\n".join(bot_lines) if bot_lines else "No hosted bots configured"
+
                         status_msg = (
                             f"<b>🖥️ Server Status</b>\n\n"
                             f"⏱ Uptime: {format_uptime(time.time() - START_TIME)}\n"
                             f"💻 CPU: {cpu}%\n"
                             f"🧠 RAM: {round(ram.used/(1024**3), 2)} / {round(ram.total/(1024**3), 2)} GB\n\n"
                             f"<b>Bots:</b>\n"
-                            f"❤️ Love Whispers: {b1}\n"
-                            f"🎒 PackTogether: {b2}\n\n"
+                            f"{bots_text}\n\n"
                             f"🌐 <b>Panel:</b> <a href=\"{cf_url}\">{cf_url}</a>\n"
                             f"💻 <b>SSH:</b> <code>{ssh_cmd}</code>"
                         )
@@ -475,27 +661,8 @@ def status():
     cf_url = get_panel_url()
     ssh_cmd = get_ssh_cmd()
     
-    bot_status = {}
-    online_count = 0
-    for key, info in BOTS.items():
-        proc = get_bot_proc(key)
-        running = proc is not None
-        if running:
-            online_count += 1
-            proc_uptime = format_uptime(time.time() - proc.create_time())
-            pid = proc.pid
-        else:
-            proc_uptime = "—"
-            pid = "—"
-
-        bot_status[key] = {
-            "name": info["name"],
-            "icon": info["icon"],
-            "running": running,
-            "pid": pid,
-            "uptime": proc_uptime,
-            "restarts": RESTART_COUNTS[key]
-        }
+    bot_status = get_bot_statuses()
+    online_count = sum(1 for bot in bot_status.values() if bot["running"])
 
     return jsonify({
         "system": {
@@ -510,7 +677,7 @@ def status():
         },
         "fleet": {
             "online": online_count,
-            "total": len(BOTS)
+            "total": len(bot_status)
         },
         "bots": bot_status
     })
@@ -792,10 +959,11 @@ def get_logs(bot_key):
         "hermes": "/tmp/hermes.log",
         "9router": "/tmp/9router.log"
     }
-    if bot_key not in BOTS and bot_key not in log_paths:
+    definition = get_bot_definition(bot_key)
+    if definition is None and bot_key not in log_paths:
         return jsonify({"error": "Unknown log target"}), 404
 
-    log_path = log_paths[bot_key] if bot_key in log_paths else BOTS[bot_key]["log_path"]
+    log_path = log_paths[bot_key] if bot_key in log_paths else get_bot_info(definition)["log_path"]
     try:
         lines = max(1, min(int(request.args.get("lines", 200)), 1000))
     except ValueError:
@@ -817,32 +985,100 @@ def get_env(env_key):
         values = {key: os.environ.get(key, "") for key in SERVER_SECRET_KEYS if os.environ.get(key) is not None}
         return jsonify({"env": values, "count": len(values)})
 
-    if env_key not in BOTS:
+    registry = get_bot_registry()
+    if get_bot_definition(env_key, registry) is None:
         return jsonify({"error": "Unknown environment target"}), 404
 
-    env_path = os.path.join(BOTS[env_key]["dir"], ".env")
-    env_vars = {}
-    if os.path.exists(env_path):
-        with open(env_path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    env_vars[k.strip()] = v.strip()
+    try:
+        credentials = get_bot_credentials(registry, env_key, BOT_CREDENTIALS_KEY)
+    except ValueError:
+        return jsonify({"error": "Bot environment is unavailable"}), 503
+    env_vars = credentials["environment"]
     return jsonify({"env": env_vars, "count": len(env_vars)})
+
+@app.route("/api/bots", methods=["GET", "POST"])
+@login_required
+def bot_registry_collection():
+    if request.method == "GET":
+        registry = get_bot_registry()
+        return jsonify({"bots": registry["bots"], "jobs": list(BOT_INSTALL_JOBS.values())})
+
+    payload = request.get_json(silent=True) or {}
+    name = payload.get("name", "")
+    repository = payload.get("repository", "")
+    ref = payload.get("ref", "main")
+    entrypoint = payload.get("entrypoint", "")
+    pat = payload.get("pat", "")
+    raw_environment = payload.get("environment", "")
+
+    if not isinstance(name, str) or not name.strip():
+        return jsonify({"error": "Bot name is required"}), 400
+    if not isinstance(repository, str) or not repository.strip():
+        return jsonify({"error": "Repository URL is required"}), 400
+    if not isinstance(ref, str) or not ref.strip():
+        return jsonify({"error": "Git ref is required"}), 400
+    if not isinstance(entrypoint, str) or not entrypoint.strip():
+        return jsonify({"error": "Entrypoint is required"}), 400
+    if not isinstance(pat, str):
+        return jsonify({"error": "PAT must be a string"}), 400
+
+    try:
+        environment = parse_environment_assignments(raw_environment)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    definition = {
+        "id": generate_bot_id(),
+        "name": name.strip(),
+        "repository": repository.strip(),
+        "ref": ref.strip(),
+        "entrypoint": entrypoint.strip(),
+        "enabled": False,
+    }
+
+    try:
+        validate_bot_definition(definition)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    job_id = secrets.token_hex(8)
+    _record_bot_job(job_id, "queued", 0, "Queued for installation...", step="queued", bot_id=None)
+    thread = threading.Thread(target=_run_bot_install, args=(job_id, definition, pat.strip(), environment), daemon=True)
+    thread.start()
+    return jsonify({"success": True, "bot": definition, "job": BOT_INSTALL_JOBS[job_id]}), 202
+
+
+@app.route("/api/bots/jobs")
+@login_required
+def bot_install_jobs():
+    with BOT_INSTALL_JOBS_LOCK:
+        jobs = [dict(job) for job in BOT_INSTALL_JOBS.values()]
+    return jsonify({"jobs": jobs})
+
+
+@app.route("/api/bots/jobs/<job_id>")
+@login_required
+def bot_install_job(job_id):
+    with BOT_INSTALL_JOBS_LOCK:
+        job = BOT_INSTALL_JOBS.get(job_id)
+    if job is None:
+        return jsonify({"error": "Unknown job"}), 404
+    return jsonify({"job": job})
+
 
 @app.route("/api/bot/<bot_key>/<action>", methods=["POST"])
 @login_required
 def control_bot(bot_key, action):
-    if bot_key not in BOTS:
+    if action not in {"start", "stop", "restart"}:
+        return jsonify({"error": "Invalid action"}), 400
+
+    definition = get_bot_definition(bot_key)
+    if definition is None:
         return jsonify({"error": "Unknown bot"}), 404
-    
-    info = BOTS[bot_key]
+    info = get_bot_info(definition)
     proc = get_bot_proc(bot_key)
 
-    if action in ["stop", "restart"]:
-        if action == "stop":
-            set_bot_enabled(bot_key, False)
+    if action in {"stop", "restart"}:
         if proc:
             try:
                 proc.terminate()
@@ -850,6 +1086,7 @@ def control_bot(bot_key, action):
             except Exception:
                 try:
                     proc.kill()
+                    proc.wait(timeout=5)
                 except Exception:
                     pass
         if os.path.exists(info["pid_path"]):
@@ -859,19 +1096,57 @@ def control_bot(bot_key, action):
                 pass
         
         if action == "stop":
+            set_bot_enabled(bot_key, False)
             return jsonify({"success": True, "message": f"{info['name']} stopped"})
 
-    if action in ["start", "restart"]:
+    if action == "start" and proc is not None:
+        return jsonify({"error": "Bot is already running"}), 409
+
+    repo_root = os.path.realpath(info["dir"])
+    entrypoint_path = os.path.realpath(os.path.join(repo_root, *info["entry"].split("/")))
+    try:
+        entrypoint_is_contained = os.path.commonpath([repo_root, entrypoint_path]) == repo_root
+    except ValueError:
+        entrypoint_is_contained = False
+    if not entrypoint_is_contained or not os.path.isfile(entrypoint_path):
+        return jsonify({"error": "Bot entrypoint is missing or outside its repository"}), 409
+    if not os.path.isfile(info["venv_python"]):
+        return jsonify({"error": "Bot environment is not installed"}), 409
+
+    registry = get_bot_registry()
+    try:
+        credentials = get_bot_credentials(registry, bot_key, BOT_CREDENTIALS_KEY)
+    except ValueError:
+        return jsonify({"error": "Bot credentials are unavailable"}), 503
+
+    bot_environment = {
+        "PATH": os.pathsep.join((os.path.dirname(info["venv_python"]), os.environ.get("PATH", ""))),
+        "HOME": os.path.expanduser("~"),
+        "USER": os.environ.get("USER", "runner"),
+        "LANG": "C.UTF-8",
+        "VIRTUAL_ENV": os.path.dirname(os.path.dirname(info["venv_python"])),
+        **credentials["environment"],
+    }
+    try:
+        with open(info["log_path"], "ab") as log_file:
+            process = subprocess.Popen(
+                [info["venv_python"], "-u", entrypoint_path],
+                cwd=repo_root,
+                env=bot_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        with open(info["pid_path"], "w", encoding="ascii") as pid_file:
+            pid_file.write(str(process.pid))
         set_bot_enabled(bot_key, True)
-        if action == "restart":
-            RESTART_COUNTS[bot_key] += 1
+    except (OSError, ValueError):
+        return jsonify({"error": "Bot could not be started"}), 503
 
-        venv_python = os.path.join(info["dir"], ".venv/bin/python")
-        cmd = f"cd {info['dir']} && nohup {venv_python} -u {info['entry']} > {info['log_path']} 2>&1 & echo $! > {info['pid_path']}"
-        subprocess.Popen(cmd, shell=True)
-        return jsonify({"success": True, "message": f"{info['name']} started"})
-
-    return jsonify({"error": "Invalid action"}), 400
+    if action == "restart":
+        BOT_RESTART_COUNTS[bot_key] = BOT_RESTART_COUNTS.get(bot_key, 0) + 1
+    return jsonify({"success": True, "message": f"{info['name']} started"})
 
 @app.route("/api/files")
 @login_required

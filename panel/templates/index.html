@@ -85,6 +85,21 @@ body::before {
 }
 
 button, select, input, textarea { font: inherit; outline: none; }
+.field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+.field-label {
+    display: block;
+    padding-left: 2px;
+    color: #7f8da1;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+}
 /* !important so the ring also wins over the hover glow on coloured buttons */
 button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
     box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px rgba(85, 199, 255, .55) !important;
@@ -152,7 +167,60 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 
 .grid { display: grid; }
 .metrics { grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.bot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.bot-grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+
+.add-bot-panel {
+    margin: 0;
+    padding: 0 20px;
+    opacity: 0;
+    transform: translateY(-10px);
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+        opacity .32s cubic-bezier(.2, .8, .2, 1),
+        transform .32s cubic-bezier(.2, .8, .2, 1),
+        max-height .36s cubic-bezier(.2, .8, .2, 1),
+        padding .36s cubic-bezier(.2, .8, .2, 1),
+        margin .36s cubic-bezier(.2, .8, .2, 1),
+        visibility 0s linear .36s;
+    overflow: hidden;
+    max-height: 0;
+    border-width: 0;
+}
+.add-bot-panel.is-open {
+    margin-bottom: 20px;
+    padding: 22px 20px 18px;
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
+    pointer-events: auto;
+    max-height: 500px;
+    border-width: 1px;
+    transition:
+        opacity .32s cubic-bezier(.2, .8, .2, 1),
+        transform .32s cubic-bezier(.2, .8, .2, 1),
+        max-height .36s cubic-bezier(.2, .8, .2, 1),
+        padding .36s cubic-bezier(.2, .8, .2, 1),
+        margin .36s cubic-bezier(.2, .8, .2, 1),
+        visibility 0s linear 0s;
+}
+.add-bot-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px 18px;
+    align-items: end;
+}
+.add-bot-form .wide {
+    grid-column: 1 / -1;
+}
+.add-bot-form .inline-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    grid-column: 1 / -1;
+    min-height: 38px;
+}
 
 .panel {
     position: relative;
@@ -194,6 +262,18 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
     text-decoration: none;
     cursor: pointer;
     transition: transform .16s ease, background .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease;
+}
+.btn-primary {
+    border-color: rgba(57, 230, 161, .32);
+    background: linear-gradient(180deg, rgba(57, 230, 161, .18), rgba(57, 230, 161, .10));
+    color: #baf8db;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 8px 22px rgba(57, 230, 161, .10);
+}
+.btn-primary:hover:not(:disabled) {
+    background: linear-gradient(180deg, rgba(57, 230, 161, .22), rgba(57, 230, 161, .12));
+    border-color: rgba(57, 230, 161, .45);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 10px 28px rgba(57, 230, 161, .14);
+    color: #d9faea;
 }
 .btn:hover:not(:disabled) {
     transform: translateY(-1px);
@@ -326,6 +406,19 @@ select.field { cursor: pointer; }
     box-shadow: var(--shadow-hover);
 }
 .bot-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; }
+.bot-card .bot-stats {
+    margin: 16px 0 14px;
+    border-radius: 12px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, .02);
+}
+.bot-card .bot-stat { padding: 10px 12px; }
+.bot-card .stat-value {
+    color: #dfe9f7;
+    font-size: 11px;
+    font-weight: 600;
+}
 .bot-identity { display: flex; align-items: center; gap: 11px; }
 .bot-icon {
     width: 40px;
@@ -1074,55 +1167,50 @@ select.field { cursor: pointer; }
     <section class="section">
         <div class="section-heading">
             <div class="section-title">Bot Fleet</div>
-            <div class="section-info">continuous lifecycle</div>
+            <div class="section-info" style="display: flex; align-items: center; gap: 10px;">
+                <button id="toggle-add-bot" class="btn btn-primary" type="button">＋ Add bot</button>
+            </div>
         </div>
-        <div class="grid bot-grid">
-            <article class="panel bot-card">
-                <div class="bot-header">
-                    <div class="bot-identity">
-                        <div class="bot-icon">❤️</div>
-                        <div>
-                            <div class="bot-name">Love Whispers</div>
-                            <div class="bot-id">love-whispers-bot</div>
-                        </div>
-                    </div>
-                    <div id="status-love-whispers" class="status stopped"><span class="status-dot"></span>STOPPED</div>
-                </div>
-                <div class="bot-stats">
-                    <div class="bot-stat"><div class="stat-label">PID</div><div class="stat-value" id="pid-love-whispers">—</div></div>
-                    <div class="bot-stat"><div class="stat-label">Uptime</div><div class="stat-value" id="uptime-love-whispers">—</div></div>
-                    <div class="bot-stat"><div class="stat-label">Restarts</div><div class="stat-value" id="restarts-love-whispers">0</div></div>
-                </div>
-                <div class="bot-actions">
-                    <button class="btn btn-start" type="button" data-bot="love-whispers" data-action="start">▶️ Start</button>
-                    <button class="btn btn-restart" type="button" data-bot="love-whispers" data-action="restart">🔄 Restart</button>
-                    <button class="btn btn-stop" type="button" data-bot="love-whispers" data-action="stop">⏹️ Stop</button>
-                </div>
-            </article>
 
-            <article class="panel bot-card">
-                <div class="bot-header">
-                    <div class="bot-identity">
-                        <div class="bot-icon">🎒</div>
-                        <div>
-                            <div class="bot-name">PackTogether</div>
-                            <div class="bot-id">PackTogether</div>
-                        </div>
-                    </div>
-                    <div id="status-packtogether" class="status stopped"><span class="status-dot"></span>STOPPED</div>
+        <div id="add-bot-panel" class="panel add-bot-panel" hidden>
+            <div class="section-heading" style="margin-bottom: 16px;">
+                <div class="section-title" style="font-size: 1rem; letter-spacing: .12em;">Add a Bot</div>
+                <div class="section-info">GitHub repo + PAT + env</div>
+            </div>
+            <form id="add-bot-form" class="add-bot-form">
+                <label class="field-group">
+                    <span class="field-label">Name</span>
+                    <input id="bot-name" class="field" type="text" name="name" placeholder="Example Bot" required>
+                </label>
+                <label class="field-group">
+                    <span class="field-label">GitHub repo</span>
+                    <input id="bot-repository" class="field" type="url" name="repository" placeholder="https://github.com/org/repo.git" required>
+                </label>
+                <label class="field-group">
+                    <span class="field-label">Ref</span>
+                    <input id="bot-ref" class="field" type="text" name="ref" value="main" required>
+                </label>
+                <label class="field-group">
+                    <span class="field-label">Entrypoint</span>
+                    <input id="bot-entrypoint" class="field" type="text" name="entrypoint" placeholder="src/bot.py" required>
+                </label>
+                <label class="field-group">
+                    <span class="field-label">PAT (optional)</span>
+                    <input id="bot-pat" class="field" type="password" name="pat" placeholder="GitHub PAT for private repos">
+                </label>
+                <label class="field-group wide">
+                    <span class="field-label">Env vars</span>
+                    <textarea id="bot-environment" class="field" name="environment" rows="3" placeholder="BOT_TOKEN=value1 OTHER_VAR=value2"></textarea>
+                </label>
+                <div class="inline-actions">
+                    <button class="btn btn-start" type="submit">🚀 Add bot</button>
+                    <div id="install-status" class="log-meta" style="min-height: 1.2em;">No install running.</div>
                 </div>
-                <div class="bot-stats">
-                    <div class="bot-stat"><div class="stat-label">PID</div><div class="stat-value" id="pid-packtogether">—</div></div>
-                    <div class="bot-stat"><div class="stat-label">Uptime</div><div class="stat-value" id="uptime-packtogether">—</div></div>
-                    <div class="bot-stat"><div class="stat-label">Restarts</div><div class="stat-value" id="restarts-packtogether">0</div></div>
-                </div>
-                <div class="bot-actions">
-                    <button class="btn btn-start" type="button" data-bot="packtogether" data-action="start">▶️ Start</button>
-                    <button class="btn btn-restart" type="button" data-bot="packtogether" data-action="restart">🔄 Restart</button>
-                    <button class="btn btn-stop" type="button" data-bot="packtogether" data-action="stop">⏹️ Stop</button>
-                </div>
-            </article>
+            </form>
         </div>
+
+        <div id="bot-grid" class="grid bot-grid"></div>
+        <div id="job-list" class="grid" style="margin-top: 18px; gap: 12px; display: none;"></div>
     </section>
 
     <!-- Console -->
@@ -1139,8 +1227,6 @@ select.field { cursor: pointer; }
                 </div>
                 <div class="console-right" id="bot-select-wrapper">
                     <select id="bot-select" class="bot-select field">
-                        <option value="love-whispers">Love Whispers</option>
-                        <option value="packtogether">PackTogether</option>
                         <option value="server-secrets">Server Secrets</option>
                     </select>
                 </div>
@@ -1152,7 +1238,7 @@ select.field { cursor: pointer; }
                     <div class="log-state" id="log-state" data-state="connecting" role="status" aria-live="polite">
                         <span class="log-state-dot" aria-hidden="true"></span><span id="log-state-text">CONNECTING</span>
                     </div>
-                    <div id="log-target" class="log-meta">Love Whispers</div>
+                    <div id="log-target" class="log-meta">Live system logs</div>
                     <input id="log-search" class="log-search field" type="search" placeholder="Filter logs…">
                     <div id="log-count" class="log-meta">0 lines</div>
                     <button class="btn btn-pause" id="pause-logs" type="button">⏸ Pause</button>
@@ -1282,7 +1368,6 @@ select.field { cursor: pointer; }
 const POLL_STATUS_MS = 3000;
 const POLL_LOGS_MS = 5000;
 const POLL_ASSISTANT_MS = 15000;
-const BOT_TARGETS = ['love-whispers', 'packtogether'];   // log targets that also have an .env file
 const TAB_IDS = ['assistant', 'logs', 'env', 'files'];
 const DEFAULT_CHAT_TITLE = 'New chat';
 const MOBILE_QUERY = window.matchMedia('(max-width: 520px)');
@@ -1311,6 +1396,7 @@ const state = {
     tab: 'logs',
     sshCommand: '',
     bots: {},
+    installJobs: [],
     pendingBots: new Set(),   // bots with a start/stop/restart request in flight
     logs: { raw: '', paused: false, target: '', health: 'connecting' },   // health: connecting | live | error
     env: { data: {}, masked: true, notice: '' },
@@ -1811,18 +1897,86 @@ function syncBotButtons(key) {
     });
 }
 
-function renderBot(key, bot) {
-    const badge = $(`status-${key}`);
-    if (badge) {
-        badge.className = `status ${bot.running ? 'running' : 'stopped'}`;
-        badge.replaceChildren(h('span', { class: 'status-dot' }), bot.running ? 'RUNNING' : 'STOPPED');
+function renderBotCards() {
+    const grid = $('bot-grid');
+    if (!grid) return;
+    const entries = Object.entries(state.bots || {});
+    if (!entries.length) {
+        grid.replaceChildren(h('div', { class: 'panel bot-card', style: 'grid-column: 1 / -1;' },
+            h('div', { class: 'bot-header' },
+                h('div', { class: 'bot-identity' },
+                    h('div', { class: 'bot-icon' }, '🤖'),
+                    h('div', {}, h('div', { class: 'bot-name', text: 'No bots yet' }), h('div', { class: 'bot-id', text: 'install a bot from GitHub to begin' }))),
+                h('div', { class: 'status stopped' }, h('span', { class: 'status-dot' }), 'EMPTY')),
+            h('div', { class: 'bot-stats' },
+                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Status' }), h('div', { class: 'stat-value', text: 'waiting' })),
+                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Repo' }), h('div', { class: 'stat-value', text: '—' })),
+                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Runs' }), h('div', { class: 'stat-value', text: '0' })
+            )),
+        ));
+        return;
     }
-    const fields = { pid: bot.pid, uptime: bot.uptime, restarts: bot.restarts };
-    for (const [field, value] of Object.entries(fields)) {
-        const node = $(`${field}-${key}`);
-        if (node) node.textContent = value;
+
+    const cards = entries.map(([key, bot]) => {
+        const running = !!bot.running;
+        const card = h('article', { class: 'panel bot-card' },
+            h('div', { class: 'bot-header' },
+                h('div', { class: 'bot-identity' },
+                    h('div', { class: 'bot-icon' }, bot.icon || '🤖'),
+                    h('div', {},
+                        h('div', { class: 'bot-name', text: bot.name || key }),
+                        h('div', { class: 'bot-id', text: key }
+                        ))),
+                h('div', { id: `status-${key}`, class: `status ${running ? 'running' : 'stopped'}` },
+                    h('span', { class: 'status-dot' }), running ? 'RUNNING' : 'STOPPED')),
+            h('div', { class: 'bot-stats' },
+                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'PID' }), h('div', { class: 'stat-value', text: bot.pid || '—' })),
+                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Uptime' }), h('div', { class: 'stat-value', text: bot.uptime || '—' })),
+                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Restarts' }), h('div', { class: 'stat-value', text: bot.restarts ?? 0 }))),
+            h('div', { class: 'bot-actions' },
+                h('button', { class: 'btn btn-start', type: 'button', 'data-bot': key, 'data-action': 'start', text: '▶️ Start' }),
+                h('button', { class: 'btn btn-restart', type: 'button', 'data-bot': key, 'data-action': 'restart', text: '🔄 Restart' }),
+                h('button', { class: 'btn btn-stop', type: 'button', 'data-bot': key, 'data-action': 'stop', text: '⏹️ Stop' }))
+        );
+        return card;
+    });
+    grid.replaceChildren(...cards);
+    document.querySelectorAll('[data-bot][data-action]').forEach(button => {
+        button.onclick = () => controlBot(button.dataset.bot, button.dataset.action);
+    });
+    syncBotButtons();
+}
+
+function renderInstallJobs() {
+    const list = $('job-list');
+    if (!list) return;
+    const jobs = state.installJobs.filter(job => job && (job.status === 'queued' || job.status === 'running' || job.status === 'failed' || job.status === 'success'));
+    if (!jobs.length) {
+        list.style.display = 'none';
+        list.replaceChildren();
+        return;
     }
-    syncBotButtons(key);
+    list.style.display = 'grid';
+    list.replaceChildren(...jobs.map(job => {
+        const jobRow = h('div', { class: 'panel', style: 'padding: 14px 16px;' },
+            h('div', { class: 'section-heading', style: 'margin-bottom: 8px;' },
+                h('div', { class: 'section-title', style: 'font-size: .95rem;', text: `Install: ${job.bot_id || 'new bot'}` }),
+                h('div', { class: 'section-info', text: job.status.toUpperCase() })),
+            h('div', { class: 'progress', style: 'margin-bottom: 8px;' },
+                h('div', { style: `width: ${Math.max(4, job.progress || 0)}%;` })),
+            h('div', { class: 'log-meta', text: job.message || 'Processing...' }));
+        return jobRow;
+    }));
+}
+
+async function refreshInstallJobs() {
+    try {
+        const data = await apiJson('/api/bots', { cache: 'no-store' }, 'Unable to load bot jobs');
+        state.installJobs = Array.isArray(data.jobs) ? data.jobs : [];
+        renderInstallJobs();
+    } catch (error) {
+        console.error('Install jobs error', error);
+    }
 }
 
 async function refreshStatus() {
@@ -1851,8 +2005,9 @@ async function refreshStatus() {
         $('ssh-val').textContent = system.ssh_command;
         state.sshCommand = system.ssh_command;
 
-        state.bots = bots;
-        for (const [key, bot] of Object.entries(bots)) renderBot(key, bot);
+        state.bots = bots || {};
+        syncBotSelectOptions();
+        renderBotCards();
 
         $('last-update').textContent = new Date().toLocaleTimeString();
         setConnection(true);
@@ -1863,6 +2018,25 @@ async function refreshStatus() {
 }
 
 /* 5. Console tabs ----------------------------------------------------------- */
+function getBotTargets() {
+    return [...new Set([...(Object.keys(state.bots || {})), 'server-secrets'])];
+}
+
+function syncBotSelectOptions() {
+    const select = $('bot-select');
+    if (!select) return;
+    const targets = getBotTargets();
+    const currentValue = select.value || targets[0] || 'server-secrets';
+    const options = targets.map(key => {
+        if (key === 'server-secrets') return h('option', { value: key, text: 'Server Secrets' });
+        const bot = state.bots?.[key];
+        return h('option', { value: key, text: bot?.name || key });
+    });
+    select.replaceChildren(...options);
+    if (targets.includes(currentValue)) select.value = currentValue;
+    else if (targets[0]) select.value = targets[0];
+}
+
 const selectedTarget = () => {
     const select = $('bot-select');
     return { key: select.value, label: select.selectedOptions[0]?.text || select.value };
@@ -1952,7 +2126,8 @@ async function refreshEnv() {
     const { key, label } = selectedTarget();
     state.env.data = {};
     state.env.notice = '';
-    if (!BOT_TARGETS.includes(key)) {
+    const botTargets = getBotTargets();
+    if (!botTargets.includes(key)) {
         state.env.notice = `No .env file is exposed for ${label}.`;
         renderEnv();
         return;
@@ -2681,14 +2856,77 @@ async function redeployServer(button) {
 }
 
 /* 8. Init ------------------------------------------------------------------- */
+async function addBot(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const name = $('bot-name').value.trim();
+    const repository = $('bot-repository').value.trim();
+    const ref = $('bot-ref').value.trim() || 'main';
+    const entrypoint = $('bot-entrypoint').value.trim();
+    const pat = $('bot-pat').value.trim();
+    const environment = $('bot-environment').value.trim();
+
+    try {
+        const data = await apiJson('/api/bots', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, repository, ref, entrypoint, pat, environment })
+        }, 'Could not add bot');
+        showToast(`Bot queued: ${data.bot?.name || name}`);
+        form.reset();
+        $('bot-ref').value = 'main';
+        $('install-status').textContent = `Queued: ${data.job?.status || 'pending'}`;
+        const panel = $('add-bot-panel');
+        if (panel) {
+            panel.classList.remove('is-open');
+            window.setTimeout(() => {
+                panel.hidden = true;
+            }, 360);
+        }
+        const trigger = $('toggle-add-bot');
+        if (trigger) trigger.textContent = '＋ Add bot';
+        await refreshInstallJobs();
+        await refreshStatus();
+    } catch (error) {
+        showToast(error.message, 'error');
+        $('install-status').textContent = error.message;
+    }
+}
+
 function bindEvents() {
     // Header, fleet, metrics
     $('redeploy-btn').addEventListener('click', event => redeployServer(event.currentTarget));
+    $('toggle-add-bot').addEventListener('click', () => {
+        const panel = $('add-bot-panel');
+        const trigger = $('toggle-add-bot');
+        if (!panel || !trigger) return;
+        const isOpen = panel.classList.contains('is-open');
+
+        if (isOpen) {
+            panel.classList.remove('is-open');
+            trigger.textContent = '＋ Add bot';
+            window.setTimeout(() => {
+                panel.hidden = true;
+            }, 360);
+            return;
+        }
+
+        panel.hidden = false;
+        requestAnimationFrame(() => {
+            panel.classList.add('is-open');
+            trigger.textContent = '− Close';
+            requestAnimationFrame(() => {
+                const firstField = $('bot-name');
+                if (firstField) firstField.focus();
+            });
+        });
+    });
     $('copy-ssh-btn').addEventListener('click', () => (state.sshCommand
         ? copyText(state.sshCommand, 'SSH command copied to clipboard!')
         : showToast('SSH command is not available yet.', 'error')));
     document.querySelectorAll('[data-bot][data-action]').forEach(button =>
         button.addEventListener('click', () => controlBot(button.dataset.bot, button.dataset.action)));
+    $('add-bot-form').addEventListener('submit', addBot);
 
     // Console
     document.querySelectorAll('.tab-btn').forEach(button => button.addEventListener('click', () => switchTab(button.dataset.tab)));
@@ -2742,15 +2980,16 @@ function bindEvents() {
 function startPolling() {
     const whenVisible = task => () => { if (!document.hidden) task(); };
     setInterval(whenVisible(refreshStatus), POLL_STATUS_MS);
+    setInterval(whenVisible(refreshInstallJobs), POLL_STATUS_MS);
     setInterval(whenVisible(refreshLogs), POLL_LOGS_MS);
     setInterval(whenVisible(() => { if (state.tab === 'assistant' && !assistant.abort) checkAssistantHealth(); }), POLL_ASSISTANT_MS);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshStatus(); refreshLogs(); } });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshStatus(); refreshInstallJobs(); refreshLogs(); } });
 }
 
 bindEvents();
-BOT_TARGETS.forEach(syncBotButtons);   // initial state until the first status arrives (bots assumed stopped)
 startPolling();
 refreshStatus();
+refreshInstallJobs();
 refreshLogs();
 })();
 </script>

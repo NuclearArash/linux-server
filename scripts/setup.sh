@@ -7,18 +7,39 @@ BOT_DIR="$BASE_DIR/bots"
 PANEL_DIR="$BASE_DIR/panel"
 HERMES_HOME_DIR="$HOME/.hermes"
 NINEROUTER_HOME_DIR="$HOME/.9router"
-
-LOVE_WHISPERS_DIR="$BOT_DIR/love-whispers-bot"
-PACKTOGETHER_DIR="$BOT_DIR/PackTogether"
+BOT_REGISTRY_PATH="${BOT_REGISTRY_PATH:-$BASE_DIR/bot-registry.json}"
+BOT_CREDENTIALS_KEY_PATH="${BOT_CREDENTIALS_KEY_PATH:-$BASE_DIR/.bot_credentials_key}"
 
 echo "======================================"
 echo "Server setup"
 echo "======================================"
 
-mkdir -p "$BOT_DIR"
-mkdir -p "$PANEL_DIR"
-mkdir -p "$NINEROUTER_HOME_DIR"
+mkdir -p "$BASE_DIR" "$BOT_DIR" "$PANEL_DIR" "$NINEROUTER_HOME_DIR"
 chmod 700 "$NINEROUTER_HOME_DIR"
+
+# Persist the dynamic bot fleet across a fresh runner instance.
+if [ ! -f "$BOT_REGISTRY_PATH" ]; then
+    python3.12 - "$BOT_REGISTRY_PATH" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+registry = {"version": 1, "bots": [], "encrypted_credentials": {}}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(registry, handle, indent=2)
+    handle.write("\n")
+PY
+fi
+
+if [ ! -f "$BOT_CREDENTIALS_KEY_PATH" ]; then
+    python3.12 - "$BOT_CREDENTIALS_KEY_PATH" <<'PY'
+import os, sys
+from cryptography.fernet import Fernet
+path = sys.argv[1]
+key = Fernet.generate_key().decode("ascii")
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(f"{key}\n")
+os.chmod(path, 0o600)
+PY
+fi
 
 # The hosted runner may include Google's Chrome source, which can briefly serve
 # Packages metadata that does not match its Release file. Chrome is not a
@@ -104,8 +125,6 @@ hermes --version
 mkdir -p "$HERMES_HOME_DIR"
 chmod 700 "$HERMES_HOME_DIR"
 
-# Operator context: SOUL.md is Hermes' agent identity (system prompt slot #1). It is installed from the
-# repository on every boot so the repo stays the source of truth and the cached copy cannot go stale.
 echo "==> Installing Hermes operator context (SOUL.md)"
 if [ -f ./hermes/SOUL.md ]; then
     install -m 600 ./hermes/SOUL.md "$HERMES_HOME_DIR/SOUL.md"
@@ -126,7 +145,6 @@ PORT=20128
 NODE_ENV=production
 BASE_URL=http://127.0.0.1:20128
 NEXT_PUBLIC_BASE_URL=http://127.0.0.1:20128
-# The API is bound to loopback by start-bots.sh; Hermes uses it locally.
 REQUIRE_API_KEY=false
 ENABLE_REQUEST_LOGS=false
 EOF
@@ -155,103 +173,15 @@ sudo apt-get install -y \
 python3.12 --version
 
 echo
-echo "==> Cloning Love Whispers"
-
-if [ -d "$LOVE_WHISPERS_DIR/.git" ]; then
-    echo "Repository already exists."
-else
-    CLONE_TOKEN="${CLONE_PAT:-${GH_PAT:-}}"
-    if [ -z "$CLONE_TOKEN" ]; then
-        echo "ERROR: CLONE_PAT is not configured."
-        exit 1
-    fi
-
-    git clone \
-        "https://x-access-token:${CLONE_TOKEN}@github.com/ArashMaghsoodi/love-whispers-bot.git" \
-        "$LOVE_WHISPERS_DIR"
-fi
-
-echo
-echo "==> Cloning PackTogether"
-
-if [ -d "$PACKTOGETHER_DIR/.git" ]; then
-    echo "Repository already exists."
-else
-    git clone \
-        https://github.com/ArashMaghsoodi/PackTogether.git \
-        "$PACKTOGETHER_DIR"
-fi
-
-echo
 echo "==> Setting up Panel environment"
-
 cp -r ./panel/* "$PANEL_DIR/" 2>/dev/null || true
 cd "$PANEL_DIR"
 
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install flask psutil requests pyyaml
+pip install flask psutil requests pyyaml cryptography
 deactivate
-
-echo
-echo "==> Creating Love Whispers Python 3.12 environment"
-
-cd "$LOVE_WHISPERS_DIR"
-
-python3.12 -m venv .venv
-
-source .venv/bin/activate
-
-python --version
-python -m pip install --upgrade pip
-
-if [ -f requirements.txt ]; then
-    pip install -r requirements.txt
-else
-    echo "WARNING: Love Whispers has no requirements.txt"
-fi
-
-deactivate
-
-echo
-echo "==> Creating PackTogether Python 3.12 environment"
-
-cd "$PACKTOGETHER_DIR"
-
-python3.12 -m venv .venv
-
-source .venv/bin/activate
-
-python --version
-python -m pip install --upgrade pip
-
-if [ -f requirements.txt ]; then
-    pip install -r requirements.txt
-else
-    echo "WARNING: PackTogether has no requirements.txt"
-fi
-
-deactivate
-
-echo
-echo "==> Creating environment files"
-
-if [ -z "${LOVE_WHISPERS_ENV:-}" ]; then
-    echo "ERROR: LOVE_WHISPERS_ENV secret is empty."
-    exit 1
-fi
-
-if [ -z "${PACKTOGETHER_ENV:-}" ]; then
-    echo "ERROR: PACKTOGETHER_ENV secret is empty."
-    exit 1
-fi
-
-printf '%s\n' "$LOVE_WHISPERS_ENV" > "$LOVE_WHISPERS_DIR/.env"
-printf '%s\n' "$PACKTOGETHER_ENV" > "$PACKTOGETHER_DIR/.env"
-
-chmod 600 "$LOVE_WHISPERS_DIR/.env"
-chmod 600 "$PACKTOGETHER_DIR/.env"
 
 echo
 echo "======================================"
@@ -259,7 +189,7 @@ echo "Setup complete"
 echo "======================================"
 
 echo
-echo "Love Whispers: $LOVE_WHISPERS_DIR"
-echo "PackTogether:  $PACKTOGETHER_DIR"
+echo "Bot registry:  $BOT_REGISTRY_PATH"
+echo "Bot creds key: $BOT_CREDENTIALS_KEY_PATH"
 echo "Panel:         $PANEL_DIR"
 echo "Hermes home:   $HERMES_HOME_DIR"

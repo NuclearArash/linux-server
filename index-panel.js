@@ -14,7 +14,7 @@
 const POLL_STATUS_MS = 3000;
 const POLL_LOGS_MS = 5000;
 const POLL_ASSISTANT_MS = 15000;
-const BOT_TARGETS = ['love-whispers', 'packtogether'];   // log targets that also have an .env file
+const BOT_TARGETS = [];   // registry-managed bots are discovered from the server at runtime
 const TAB_IDS = ['assistant', 'logs', 'env', 'files'];
 const DEFAULT_CHAT_TITLE = 'New chat';
 const MOBILE_QUERY = window.matchMedia('(max-width: 520px)');

@@ -21,13 +21,17 @@ jobs:
       - name: Make Scripts Executable
         run: chmod +x scripts/*.sh
 
-      - name: Restore Persistent Bot State
+      - name: Restore Dynamic Bot Fleet
         uses: actions/cache/restore@v4
         with:
-          path: /home/runner/bot-server/state.json
-          key: bot-server-state-${{ github.run_id }}
+          path: |
+            /home/runner/bot-server/bot-registry.json
+            /home/runner/bot-server/.bot_credentials_key
+            /home/runner/bot-server/bots
+            /home/runner/bot-server/state.json
+          key: bot-fleet-${{ github.run_id }}
           restore-keys: |
-            bot-server-state-
+            bot-fleet-
 
       - name: Restore Hermes State
         uses: actions/cache/restore@v4
@@ -49,9 +53,6 @@ jobs:
         env:
           SERVER_USERNAME: ${{ vars.SERVER_USERNAME || secrets.SERVER_USERNAME || 'admin' }}
           SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD || 'admin' }}
-          CLONE_PAT: ${{ secrets.CLONE_PAT || secrets.GH_PAT }}
-          LOVE_WHISPERS_ENV: ${{ secrets.LOVE_WHISPERS_ENV }}
-          PACKTOGETHER_ENV: ${{ secrets.PACKTOGETHER_ENV }}
         run: ./scripts/setup.sh
 
       - name: Start Telegram Bots, Panel & Tunnels
@@ -97,12 +98,16 @@ jobs:
         if: always()
         run: ./scripts/stop-bots.sh
 
-      - name: Save Persistent Bot State
+      - name: Save Dynamic Bot Fleet
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: /home/runner/bot-server/state.json
-          key: bot-server-state-${{ github.run_id }}
+          path: |
+            /home/runner/bot-server/bot-registry.json
+            /home/runner/bot-server/.bot_credentials_key
+            /home/runner/bot-server/bots
+            /home/runner/bot-server/state.json
+          key: bot-fleet-${{ github.run_id }}
 
       - name: Save Hermes State
         if: always()
@@ -124,8 +129,7 @@ jobs:
         with:
           name: bot-server-logs-${{ github.run_id }}
           path: |
-            /tmp/love-whispers.log
-            /tmp/packtogether.log
+            /tmp/bot-*.log
             /tmp/panel.log
             /tmp/cloudflared.log
             /tmp/hermes.log

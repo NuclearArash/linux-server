@@ -84,8 +84,7 @@ case "$SSH_CMD" in
 esac
 
 NOW=$(TZ='Asia/Tehran' date '+%Y-%m-%d %H:%M:%S Tehran')
-STATUS_LOVE=$(bot_status_plain "Love Whispers" "/tmp/love-whispers.pid")
-STATUS_PACK=$(bot_status_plain "PackTogether" "/tmp/packtogether.pid")
+STATUS_FLEET="🟢 Dynamic bot fleet: registry-managed"
 CPU_INFO=$(get_cpu)
 RAM_INFO=$(get_memory)
 HERMES_STATUS="🔴 Hermes API: UNAVAILABLE"
@@ -108,8 +107,7 @@ TELEGRAM_MSG="<b>🚀 BOT SERVER IS ONLINE</b>
 <code>${SSH_CMD}</code>${NINEROUTER_HTML}
 
 <b>🤖 Bot Status</b>
-${STATUS_LOVE}
-${STATUS_PACK}
+${STATUS_FLEET}
 ${HERMES_STATUS}
 ${HERMES_TELEGRAM_STATUS}
 
@@ -124,8 +122,7 @@ PLAIN_MSG="==================================================
   💻 SSH + 9Router tunnel: ${SSH_CMD}${NINEROUTER_PLAIN}
   ------------------------------------------------
   🤖 Bot Status:
-    ${STATUS_LOVE}
-    ${STATUS_PACK}
+    ${STATUS_FLEET}
         ${HERMES_STATUS}
         ${HERMES_TELEGRAM_STATUS}
   ------------------------------------------------

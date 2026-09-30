@@ -27,9 +27,14 @@ repository/
 
 ## Features
 
+- **Public Bot Fleet**:
+  - The server starts with an empty bot registry and no default Telegram bots.
+  - Users can add their own bots by providing a GitHub repo URL, branch/ref, entry point, PAT for private repos, and environment variables in `KEY=value` format.
+  - Bot installs run in the background with a progress bar and become available in the panel only after the clone + install completes successfully.
+  - The registry and encrypted bot credentials are persisted across fresh runner replacements so the fleet survives a disposable VM redeploy.
 - **Web Control Panel (Cloudflare Tunnel)**:
   - Real-time CPU & RAM metrics.
-  - Bot lifecycle management (Start, Restart, Stop).
+  - Bot lifecycle management (Add, Start, Restart, Stop, Remove) from a dynamic fleet list.
   - Password-protected with `SERVER_USERNAME` and `SERVER_PASSWORD`.
   - One-click **🔄 Redeploy Server** button to trigger a fresh GitHub runner with the latest code.
   - Live log streaming with search filter and pause/resume.
@@ -89,14 +94,13 @@ When the workflow boots:
 |---|---|---|
 | `SERVER_PASSWORD` | Web Panel & SSH login password | `admin` |
 | `TAILSCALE_AUTHKEY` | Tailscale auth key used to join the runner to your tailnet | None |
-| `GH_PAT` | Personal Access Token (`ArashAtomic`) to trigger workflow redeploys | None |
-| `CLONE_PAT` | Personal Access Token (`ArashMaghsoodi`) to clone private `love-whispers-bot` | None |
-| `LOVE_WHISPERS_ENV` | Complete `.env` content for Love Whispers | None |
-| `PACKTOGETHER_ENV` | Complete `.env` content for PackTogether | None |
+| `GH_PAT` | Personal Access Token used to trigger workflow redeploys | None |
 | `STATUS_BOT_TOKEN` | Telegram bot token for status notifications & commands | None |
 | `STATUS_CHAT_ID` | Telegram chat ID for notifications & commands | None |
 | `HERMES_TELEGRAM_BOT_TOKEN` | Separate Telegram bot token used by the Hermes bridge | Required for Hermes Telegram control |
 | `HERMES_API_SERVER_KEY` | Strong bearer key used internally between the panel and Hermes | Required |
+
+User-added bots can optionally provide a GitHub PAT for private repos and a `.env` block in `KEY=value` format through the web panel. Those values are stored encrypted and persisted with the bot registry across redeploys.
 
 ### Hermes Provider Setup
 
