@@ -122,7 +122,10 @@ def parse_environment_assignments(raw_environment):
     if isinstance(raw_environment, dict):
         environment = dict(raw_environment)
     elif isinstance(raw_environment, str):
-        raw_text = raw_environment.strip()
+        raw_text = "\n".join(
+            line for line in raw_environment.splitlines()
+            if not line.lstrip().startswith("#")
+        ).strip()
         if not raw_text:
             return {}
         environment = {}
@@ -145,6 +148,103 @@ def parse_environment_assignments(raw_environment):
         if not isinstance(value, str) or "\n" in value or "\r" in value:
             raise ValueError(f"Environment variable value is invalid for {key!r}")
     return environment
+
+
+class GitHubApiError(Exception):
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+
+def parse_github_repository_url(repository):
+    if not isinstance(repository, str) or len(repository) > 500:
+        raise ValueError("Enter a GitHub repository URL")
+    parsed = urllib.parse.urlsplit(repository.strip())
+    if parsed.scheme != "https" or parsed.hostname != "github.com" or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("Repository must be an HTTPS GitHub URL")
+    path_parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(path_parts) != 2:
+        raise ValueError("Repository URL must include an owner and repository name")
+    owner, repo = path_parts
+    repo = repo[:-4] if repo.endswith(".git") else repo
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", owner) or not re.fullmatch(r"[A-Za-z0-9_.-]+", repo):
+        raise ValueError("Repository URL contains invalid characters")
+    return owner, repo
+
+
+def _github_api_get(path, pat, params=None):
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "server-control-center",
+    }
+    if pat:
+        headers["Authorization"] = f"Bearer {pat}"
+    response = requests.get(
+        f"https://api.github.com{path}",
+        headers=headers,
+        params=params,
+        timeout=(3, 12),
+    )
+    if response.status_code != 200:
+        raise GitHubApiError(response.status_code)
+    try:
+        return response.json()
+    except ValueError as error:
+        raise GitHubApiError(502) from error
+
+
+def get_github_repository_metadata(repository, pat="", ref=None, include_branches=True):
+    owner, repo = parse_github_repository_url(repository)
+    owner_path = urllib.parse.quote(owner, safe="")
+    repo_path = urllib.parse.quote(repo, safe="")
+    repository_path = f"/repos/{owner_path}/{repo_path}"
+    repository_data = _github_api_get(repository_path, pat)
+    default_branch = repository_data.get("default_branch") if isinstance(repository_data, dict) else None
+    if not isinstance(default_branch, str) or not default_branch:
+        raise GitHubApiError(502)
+
+    branches = []
+    if include_branches:
+        for page in range(1, 11):
+            page_branches = _github_api_get(
+                f"{repository_path}/branches",
+                pat,
+                params={"per_page": 100, "page": page},
+            )
+            if not isinstance(page_branches, list):
+                raise GitHubApiError(502)
+            branches.extend(
+                branch["name"]
+                for branch in page_branches
+                if isinstance(branch, dict) and isinstance(branch.get("name"), str)
+            )
+            if len(page_branches) < 100:
+                break
+
+    selected_ref = (ref or default_branch).strip()
+    if not selected_ref or len(selected_ref) > 255:
+        raise ValueError("Branch name is invalid")
+    ref_path = urllib.parse.quote(selected_ref, safe="/")
+    tree = _github_api_get(
+        f"{repository_path}/git/trees/{ref_path}",
+        pat,
+        params={"recursive": "1"},
+    )
+    if not isinstance(tree, dict) or not isinstance(tree.get("tree"), list):
+        raise GitHubApiError(502)
+    files = [
+        item["path"]
+        for item in tree["tree"]
+        if isinstance(item, dict) and item.get("type") == "blob" and isinstance(item.get("path"), str)
+    ]
+    files_truncated = bool(tree.get("truncated")) or len(files) > 5000
+    return {
+        "default_branch": default_branch,
+        "ref": selected_ref,
+        "branches": branches[:1000],
+        "files": files[:5000],
+        "files_truncated": files_truncated,
+    }
 
 
 def _record_bot_job(job_id, status, progress, message, **extra):
@@ -281,7 +381,11 @@ def _run_bot_install(job_id, definition, pat, environment):
         with BOT_INSTALL_JOBS_LOCK:
             BOT_INSTALL_PAYLOADS.pop(job_id, None)
     except Exception as error:
-        _record_bot_job(job_id, "failed", 100, str(error) or "Bot installation failed.", step="error", error=str(error))
+        message = str(error) or "Bot installation failed."
+        if pat:
+            for secret in {pat, urllib.parse.quote(pat, safe="")}:
+                message = message.replace(secret, "[REDACTED]")
+        _record_bot_job(job_id, "failed", 100, message, step="error", error=message)
 
 
 def get_bot_registry():
@@ -1028,6 +1132,45 @@ def get_env(env_key):
         return jsonify({"error": "Bot environment is unavailable"}), 503
     env_vars = credentials["environment"]
     return jsonify({"env": env_vars, "count": len(env_vars)})
+
+
+@app.route("/api/github/repository-metadata", methods=["POST"])
+@login_required
+def github_repository_metadata():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Repository metadata payload must be a JSON object"}), 400
+    repository = payload.get("repository", "")
+    pat = payload.get("pat", "")
+    ref = payload.get("ref")
+    include_branches = payload.get("include_branches", True)
+    if not isinstance(pat, str) or len(pat) > 500 or "\n" in pat or "\r" in pat:
+        return jsonify({"error": "PAT is invalid"}), 400
+    if ref is not None and not isinstance(ref, str):
+        return jsonify({"error": "Branch must be a string"}), 400
+    if not isinstance(include_branches, bool):
+        return jsonify({"error": "include_branches must be a boolean"}), 400
+    try:
+        metadata = get_github_repository_metadata(repository, pat.strip(), ref, include_branches)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except GitHubApiError as error:
+        if error.status_code in {401, 403}:
+            message = "GitHub denied access or rate-limited the request. Check the PAT has repository read access."
+            status_code = 422
+        elif error.status_code == 404:
+            message = "Repository or branch not found. For a private repository, enter a PAT with repository read access."
+            status_code = 422
+        elif error.status_code == 429:
+            message = "GitHub rate limit reached. Add a PAT or try again later."
+            status_code = 503
+        else:
+            message = "GitHub could not return repository metadata. Try again later."
+            status_code = 502
+        return jsonify({"error": message}), status_code
+    except requests.RequestException:
+        return jsonify({"error": "Could not reach GitHub. Try again later."}), 502
+    return jsonify(metadata)
 
 @app.route("/api/bots", methods=["GET", "POST"])
 @login_required

@@ -86,11 +86,13 @@ body::before {
 
 button, select, input, textarea { font: inherit; outline: none; }
 .field-group {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 8px;
     min-width: 0;
 }
+.field-group:focus-within { z-index: 5; }
 .field-label {
     display: block;
     padding-left: 2px;
@@ -194,6 +196,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
     transform: translateY(0);
     visibility: visible;
     pointer-events: auto;
+    overflow: visible;
     max-height: 500px;
     border-width: 1px;
     transition:
@@ -204,6 +207,18 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
         margin .36s cubic-bezier(.2, .8, .2, 1),
         visibility 0s linear 0s;
 }
+.bot-add-error {
+    margin: 0 0 16px;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 107, 129, .28);
+    border-left: 3px solid var(--red);
+    border-radius: 8px;
+    background: rgba(255, 107, 129, .08);
+    color: #ffc0c9;
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
 .add-bot-form {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -212,6 +227,62 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 }
 .add-bot-form .wide {
     grid-column: 1 / -1;
+}
+.env-field { resize: vertical; }
+.repo-metadata-status { min-height: 1.2em; }
+.repo-metadata-status[data-state="error"] { color: #ff9baa; }
+.repo-metadata-status[data-state="success"] { color: #80e9be; }
+.combo-options {
+    position: absolute;
+    top: calc(100% + 3px);
+    right: 0;
+    left: 0;
+    z-index: 40;
+    max-height: min(240px, 40vh);
+    padding: 4px;
+    overflow-y: auto;
+    border: 1px solid var(--border-light);
+    border-radius: 9px;
+    background: #101722;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .42);
+}
+.combo-options[hidden] { display: none !important; }
+.combo-control { position: relative; width: 100%; }
+.combo-control .field { width: 100%; padding-right: 32px; }
+.combo-toggle {
+    position: absolute;
+    top: 50%;
+    right: 2px;
+    width: 27px;
+    height: 27px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #a8b3c4;
+    transform: translateY(-50%);
+    cursor: pointer;
+}
+.combo-toggle:hover { background: rgba(255, 255, 255, .08); color: var(--text); }
+.combo-option {
+    display: block;
+    width: 100%;
+    padding: 7px 9px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-align: left;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+}
+.combo-option:hover, .combo-option[aria-selected="true"] {
+    background: rgba(85, 199, 255, .13);
+    color: var(--text);
 }
 .add-bot-form .inline-actions {
     display: flex;
@@ -1211,6 +1282,7 @@ select.field { cursor: pointer; }
         </div>
 
         <div id="add-bot-panel" class="panel add-bot-panel" hidden>
+            <div id="bot-add-error" class="bot-add-error" role="alert" aria-live="assertive" hidden></div>
             <div class="section-heading" style="margin-bottom: 16px;">
                 <div class="section-title" style="font-size: 1rem; letter-spacing: .12em;">Add a Bot</div>
                 <div class="section-info">GitHub repo + PAT + env</div>
@@ -1225,20 +1297,29 @@ select.field { cursor: pointer; }
                     <input id="bot-repository" class="field" type="url" name="repository" placeholder="https://github.com/org/repo.git" required>
                 </label>
                 <label class="field-group">
-                    <span class="field-label">Ref</span>
-                    <input id="bot-ref" class="field" type="text" name="ref" value="main" required>
+                    <span class="field-label">PAT (optional)</span>
+                    <input id="bot-pat" class="field" type="password" name="pat" placeholder="GitHub PAT for private repos" autocomplete="off">
+                </label>
+                <label class="field-group">
+                    <span class="field-label">Branch</span>
+                    <div class="combo-control">
+                        <input id="bot-ref" class="field" type="text" name="ref" placeholder="main" autocomplete="off" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="bot-branch-options" required>
+                        <button id="bot-ref-toggle" class="combo-toggle" type="button" aria-label="Show available branches" aria-expanded="false" aria-controls="bot-branch-options">▾</button>
+                    </div>
+                    <div id="bot-branch-options" class="combo-options" role="listbox" aria-label="Available branches" hidden></div>
                 </label>
                 <label class="field-group">
                     <span class="field-label">Entrypoint</span>
-                    <input id="bot-entrypoint" class="field" type="text" name="entrypoint" placeholder="src/bot.py" required>
+                    <div class="combo-control">
+                        <input id="bot-entrypoint" class="field" type="text" name="entrypoint" placeholder="src/bot.py" autocomplete="off" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="bot-entrypoint-options" required>
+                        <button id="bot-entrypoint-toggle" class="combo-toggle" type="button" aria-label="Show available entrypoint files" aria-expanded="false" aria-controls="bot-entrypoint-options">▾</button>
+                    </div>
+                    <div id="bot-entrypoint-options" class="combo-options" role="listbox" aria-label="Available entrypoint files" hidden></div>
                 </label>
-                <label class="field-group">
-                    <span class="field-label">PAT (optional)</span>
-                    <input id="bot-pat" class="field" type="password" name="pat" placeholder="GitHub PAT for private repos">
-                </label>
+                <div id="repo-metadata-status" class="log-meta repo-metadata-status wide" role="status" aria-live="polite"></div>
                 <label class="field-group wide">
                     <span class="field-label">Env vars</span>
-                    <textarea id="bot-environment" class="field" name="environment" rows="3" placeholder="BOT_TOKEN=value1 OTHER_VAR=value2"></textarea>
+                    <textarea id="bot-environment" class="field env-field" name="environment" rows="4" placeholder="BOT_TOKEN=value1&#10;OTHER_VAR=value2"></textarea>
                 </label>
                 <div class="inline-actions">
                     <button id="add-bot-submit" class="btn btn-start" type="submit">🚀 Add bot</button>
@@ -1442,6 +1523,10 @@ const state = {
     dismissedInstallJobs: new Set(),
     retryJobId: null,
     addBotPanelCloseTimer: null,
+    repoMetadata: { timer: null, requestId: 0, repository: '' },
+    comboOptions: new Map(),
+    comboOpenId: null,
+    comboActiveIndex: -1,
     pendingBots: new Set(),   // bots with a start/stop/restart request in flight
     logs: { raw: '', paused: false, target: '', health: 'connecting' },   // health: connecting | live | error
     env: { data: {}, masked: true, notice: '' },
@@ -2033,6 +2118,189 @@ function setAddBotPanelOpen(isOpen) {
     }, 360);
 }
 
+function showBotAddError(message) {
+    const error = $('bot-add-error');
+    if (!error) return;
+    error.textContent = message || 'Bot installation failed.';
+    error.hidden = false;
+}
+
+function clearBotAddError() {
+    const error = $('bot-add-error');
+    if (!error) return;
+    error.textContent = '';
+    error.hidden = true;
+}
+
+function setRepositoryMetadataStatus(message, status = '') {
+    const element = $('repo-metadata-status');
+    if (!element) return;
+    element.textContent = message;
+    element.dataset.state = status;
+}
+
+const COMBO_INPUT_IDS = {
+    'bot-branch-options': 'bot-ref',
+    'bot-entrypoint-options': 'bot-entrypoint',
+};
+
+function getFilteredComboOptions(listId) {
+    const input = $(COMBO_INPUT_IDS[listId]);
+    const query = input.value.trim().toLocaleLowerCase();
+    const values = state.comboOptions.get(listId) || [];
+    if (listId === 'bot-branch-options') return values.slice(0, 100);
+    return values
+        .filter(value => !query || value.toLocaleLowerCase().includes(query))
+        .slice(0, 100);
+}
+
+function renderComboOptions(listId) {
+    const list = $(listId);
+    const inputId = COMBO_INPUT_IDS[listId];
+    const input = $(inputId);
+    if (!list || !input) return;
+
+    const options = getFilteredComboOptions(listId);
+    const isOpen = state.comboOpenId === listId && options.length > 0;
+    if (state.comboActiveIndex >= options.length) state.comboActiveIndex = options.length - 1;
+    list.replaceChildren(...options.map((value, index) => {
+        const active = isOpen && index === state.comboActiveIndex;
+        return h('div', {
+            id: `combo-option-${inputId}-${index}`,
+            class: 'combo-option',
+            role: 'option',
+            'aria-selected': active,
+            onmousedown: event => event.preventDefault(),
+            onclick: () => selectComboOption(listId, value),
+        }, value);
+    }));
+    list.hidden = !isOpen;
+    input.setAttribute('aria-expanded', String(isOpen));
+    const toggle = $(`${inputId}-toggle`);
+    if (toggle) toggle.setAttribute('aria-expanded', String(isOpen));
+    if (isOpen && state.comboActiveIndex >= 0) {
+        input.setAttribute('aria-activedescendant', `combo-option-${inputId}-${state.comboActiveIndex}`);
+    } else {
+        input.removeAttribute('aria-activedescendant');
+    }
+}
+
+function setDatalistOptions(id, values) {
+    state.comboOptions.set(id, [...new Set(values.filter(value => typeof value === 'string'))]);
+    renderComboOptions(id);
+}
+
+function openComboOptions(listId) {
+    state.comboOpenId = listId;
+    state.comboActiveIndex = -1;
+    renderComboOptions(listId);
+}
+
+function closeComboOptions(listId) {
+    if (state.comboOpenId !== listId) return;
+    state.comboOpenId = null;
+    state.comboActiveIndex = -1;
+    renderComboOptions(listId);
+}
+
+function selectComboOption(listId, value) {
+    const input = $(COMBO_INPUT_IDS[listId]);
+    input.value = value;
+    closeComboOptions(listId);
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function toggleComboOptions(inputId) {
+    const listId = inputId === 'bot-ref' ? 'bot-branch-options' : 'bot-entrypoint-options';
+    const wasOpen = state.comboOpenId === listId;
+    $(inputId).focus();
+    if (wasOpen) closeComboOptions(listId);
+    else openComboOptions(listId);
+}
+
+function handleComboKeydown(event, listId) {
+    const options = getFilteredComboOptions(listId);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        if (!options.length) return;
+        event.preventDefault();
+        state.comboOpenId = listId;
+        if (event.key === 'ArrowDown') {
+            state.comboActiveIndex = state.comboActiveIndex < options.length - 1 ? state.comboActiveIndex + 1 : 0;
+        } else {
+            state.comboActiveIndex = state.comboActiveIndex > 0 ? state.comboActiveIndex - 1 : options.length - 1;
+        }
+        renderComboOptions(listId);
+    } else if (event.key === 'Enter' && state.comboOpenId === listId && state.comboActiveIndex >= 0) {
+        event.preventDefault();
+        selectComboOption(listId, options[state.comboActiveIndex]);
+    } else if (event.key === 'Escape') {
+        closeComboOptions(listId);
+    }
+}
+
+function isGitHubRepositoryUrl(value) {
+    try {
+        const url = new URL(value);
+        const parts = url.pathname.split('/').filter(Boolean);
+        return url.protocol === 'https:' && url.hostname === 'github.com' && !url.username && !url.password &&
+            !url.search && !url.hash && parts.length === 2 && /^[A-Za-z0-9_.-]+$/.test(parts[0]) &&
+            /^[A-Za-z0-9_.-]+$/.test(parts[1].replace(/\.git$/i, ''));
+    } catch {
+        return false;
+    }
+}
+
+function queueRepositoryMetadata({ includeBranches = true, ref = null, delay = 550 } = {}) {
+    window.clearTimeout(state.repoMetadata.timer);
+    const requestId = ++state.repoMetadata.requestId;
+    const repository = $('bot-repository').value.trim();
+    const repositoryChanged = repository !== state.repoMetadata.repository;
+    if (repositoryChanged) {
+        state.repoMetadata.repository = repository;
+        $('bot-ref').value = '';
+        $('bot-entrypoint').value = '';
+        setDatalistOptions('bot-branch-options', []);
+        setDatalistOptions('bot-entrypoint-options', []);
+    }
+    if (!repository) {
+        setRepositoryMetadataStatus('');
+        return;
+    }
+    if (!isGitHubRepositoryUrl(repository)) {
+        setRepositoryMetadataStatus('Enter an HTTPS GitHub owner/repository URL.');
+        return;
+    }
+
+    const pat = $('bot-pat').value.trim();
+    const selectedRef = repositoryChanged ? null : (ref || $('bot-ref').value.trim() || null);
+    state.repoMetadata.timer = window.setTimeout(async () => {
+        if (requestId !== state.repoMetadata.requestId) return;
+        setRepositoryMetadataStatus('Loading branches and files from GitHub...');
+        try {
+            const data = await apiJson('/api/github/repository-metadata', jsonOptions('POST', {
+                repository,
+                pat,
+                ref: selectedRef,
+                include_branches: includeBranches,
+            }), 'Could not load GitHub repository');
+            if (requestId !== state.repoMetadata.requestId || repository !== $('bot-repository').value.trim() || pat !== $('bot-pat').value.trim()) return;
+
+            if (includeBranches) {
+                setDatalistOptions('bot-branch-options', data.branches || []);
+                if (! $('bot-ref').value.trim()) $('bot-ref').value = data.default_branch || '';
+            }
+            if (data.ref && $('bot-ref').value.trim() === selectedRef) $('bot-ref').value = data.ref;
+            setDatalistOptions('bot-entrypoint-options', data.files || []);
+            const branchCount = includeBranches ? (data.branches || []).length : (state.comboOptions.get('bot-branch-options') || []).length;
+            const fileMessage = data.files_truncated ? 'File list is large; type a custom path if needed.' : `${(data.files || []).length} files found.`;
+            setRepositoryMetadataStatus(`Loaded ${branchCount} branches and ${fileMessage}`, 'success');
+        } catch (error) {
+            if (requestId !== state.repoMetadata.requestId) return;
+            setRepositoryMetadataStatus(error.message || 'Could not load repository metadata. For a private repo, enter a PAT.', 'error');
+        }
+    }, Math.max(0, delay));
+}
+
 function resetBotRetryMode(clearForm = false) {
     state.retryJobId = null;
     $('add-bot-submit').textContent = '🚀 Add bot';
@@ -2041,14 +2309,19 @@ function resetBotRetryMode(clearForm = false) {
     $('bot-environment').placeholder = 'BOT_TOKEN=value1 OTHER_VAR=value2';
     if (clearForm) {
         $('add-bot-form').reset();
-        $('bot-ref').value = 'main';
+        $('bot-ref').value = '';
+        setDatalistOptions('bot-branch-options', []);
+        setDatalistOptions('bot-entrypoint-options', []);
+        setRepositoryMetadataStatus('');
+        clearBotAddError();
     }
 }
 
-function prepareBotRetry(jobId) {
+function prepareBotRetry(jobId, announceFailure = false) {
     const job = state.installJobs.find(candidate => candidate.id === jobId);
     const definition = job?.definition;
     if (!definition) return;
+    const errorMessage = job.error || job.message || 'Bot installation failed.';
     state.retryJobId = jobId;
     $('bot-name').value = definition.name || '';
     $('bot-repository').value = definition.repository || '';
@@ -2058,11 +2331,22 @@ function prepareBotRetry(jobId) {
     $('bot-pat').placeholder = 'Leave blank to keep the saved PAT';
     $('bot-environment').value = '';
     $('bot-environment').placeholder = 'Leave blank to keep saved variables';
+    showBotAddError(errorMessage);
     $('add-bot-submit').textContent = '↻ Retry install';
     $('cancel-bot-retry').hidden = false;
     $('install-status').textContent = 'Edit the settings, then retry. Blank secrets are kept.';
-    setAddBotPanelOpen(true);
-    requestAnimationFrame(() => $('bot-entrypoint').focus());
+    state.repoMetadata.repository = $('bot-repository').value.trim();
+    queueRepositoryMetadata({ includeBranches: true, ref: $('bot-ref').value.trim(), delay: 0 });
+    const openEditor = () => {
+        setAddBotPanelOpen(true);
+        requestAnimationFrame(() => $('bot-entrypoint').focus());
+    };
+    if (announceFailure) {
+        showToast(`Bot installation failed: ${errorMessage}`, 'error');
+        window.setTimeout(openEditor, 350);
+    } else {
+        openEditor();
+    }
 }
 
 function createInstallJobCard(job) {
@@ -2137,7 +2421,7 @@ function renderInstallJobs() {
 
         if (terminal && !wasTerminal) {
             state.installJobTimers.set(job.id, window.setTimeout(() => dismissInstallJob(job.id), 7000));
-            if (failedDuringThisSession) prepareBotRetry(job.id);
+            if (failedDuringThisSession) prepareBotRetry(job.id, true);
         }
     });
 
@@ -3052,6 +3336,7 @@ async function addBot(event) {
         await refreshStatus();
     } catch (error) {
         showToast(error.message, 'error');
+        showBotAddError(error.message);
         $('install-status').textContent = error.message;
     }
 }
@@ -3075,6 +3360,20 @@ function bindEvents() {
         $('install-status').textContent = 'No install running.';
         $('bot-name').focus();
     });
+    $('bot-repository').addEventListener('input', () => queueRepositoryMetadata({ includeBranches: true }));
+    $('bot-repository').addEventListener('change', () => queueRepositoryMetadata({ includeBranches: true, delay: 0 }));
+    $('bot-pat').addEventListener('input', () => queueRepositoryMetadata({ includeBranches: true }));
+    $('bot-pat').addEventListener('change', () => queueRepositoryMetadata({ includeBranches: true, delay: 0 }));
+    $('bot-ref').addEventListener('change', () => queueRepositoryMetadata({ includeBranches: false, ref: $('bot-ref').value.trim(), delay: 0 }));
+    for (const [listId, inputId] of Object.entries(COMBO_INPUT_IDS)) {
+        const input = $(inputId);
+        input.addEventListener('focus', () => openComboOptions(listId));
+        input.addEventListener('input', () => openComboOptions(listId));
+        input.addEventListener('keydown', event => handleComboKeydown(event, listId));
+        input.addEventListener('blur', () => closeComboOptions(listId));
+    }
+    $('bot-ref-toggle').addEventListener('click', () => toggleComboOptions('bot-ref'));
+    $('bot-entrypoint-toggle').addEventListener('click', () => toggleComboOptions('bot-entrypoint'));
     $('copy-ssh-btn').addEventListener('click', () => (state.sshCommand
         ? copyText(state.sshCommand, 'SSH command copied to clipboard!')
         : showToast('SSH command is not available yet.', 'error')));

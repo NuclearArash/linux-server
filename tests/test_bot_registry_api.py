@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from cryptography.fernet import Fernet
 
@@ -71,6 +71,76 @@ class BotRegistryApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["fleet"], {"online": 0, "total": 0})
         self.assertEqual(response.json["bots"], {})
+
+    def test_environment_parser_ignores_full_line_comments(self):
+        environment = panel_app.parse_environment_assignments(
+            "# credentials for the bot\nBOT_TOKEN = one two\n   # ignored too\nOTHER = value"
+        )
+
+        self.assertEqual(environment, {"BOT_TOKEN": "one two", "OTHER": "value"})
+
+    def test_repository_metadata_returns_branches_and_default_branch_files(self):
+        responses = [
+            Mock(status_code=200, json=Mock(return_value={"default_branch": "main"})),
+            Mock(status_code=200, json=Mock(return_value=[{"name": "main"}, {"name": "feature/ui"}])),
+            Mock(status_code=200, json=Mock(return_value={
+                "truncated": False,
+                "tree": [
+                    {"path": "src", "type": "tree"},
+                    {"path": "src/bot.py", "type": "blob"},
+                    {"path": "README.md", "type": "blob"},
+                ],
+            })),
+        ]
+        with patch.object(panel_app.requests, "get", side_effect=responses) as github_get:
+            response = self.client.post(
+                "/api/github/repository-metadata",
+                json={"repository": "https://github.com/example/bot.git", "pat": "synthetic-pat"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["default_branch"], "main")
+        self.assertEqual(response.json["branches"], ["main", "feature/ui"])
+        self.assertEqual(response.json["files"], ["src/bot.py", "README.md"])
+        self.assertFalse(response.json["files_truncated"])
+        self.assertEqual(github_get.call_count, 3)
+        self.assertEqual(github_get.call_args_list[0].kwargs["headers"]["Authorization"], "Bearer synthetic-pat")
+        self.assertNotIn("synthetic-pat", response.get_data(as_text=True))
+
+    def test_repository_metadata_rejects_non_github_hosts(self):
+        with patch.object(panel_app.requests, "get") as github_get:
+            response = self.client.post(
+                "/api/github/repository-metadata",
+                json={"repository": "https://example.com/org/repo", "pat": "synthetic-pat"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        github_get.assert_not_called()
+
+    def test_repository_metadata_loads_files_for_selected_branch(self):
+        responses = [
+            Mock(status_code=200, json=Mock(return_value={"default_branch": "main"})),
+            Mock(status_code=200, json=Mock(return_value={
+                "truncated": False,
+                "tree": [{"path": "src/feature_bot.py", "type": "blob"}],
+            })),
+        ]
+        with patch.object(panel_app.requests, "get", side_effect=responses) as github_get:
+            response = self.client.post(
+                "/api/github/repository-metadata",
+                json={
+                    "repository": "https://github.com/example/bot.git",
+                    "ref": "feature/ui",
+                    "include_branches": False,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["ref"], "feature/ui")
+        self.assertEqual(response.json["branches"], [])
+        self.assertEqual(response.json["files"], ["src/feature_bot.py"])
+        self.assertEqual(github_get.call_count, 2)
+        self.assertIn("/git/trees/feature/ui", github_get.call_args_list[1].args[0])
 
     def test_environment_endpoint_returns_env_values_but_not_pat(self):
         registry, definition = self.add_bot()
@@ -189,6 +259,32 @@ class BotRegistryApiTests(unittest.TestCase):
 
         self.assertNotIn(job_id, panel_app.BOT_INSTALL_PAYLOADS)
         self.assertEqual(panel_app.BOT_INSTALL_JOBS[job_id]["status"], "success")
+
+    def test_failed_install_error_redacts_pat(self):
+        with patch.object(panel_app.threading.Thread, "start"):
+            created = self.client.post(
+                "/api/bots",
+                json={
+                    "name": "Example Bot",
+                    "repository": "https://github.com/example/telegram-bot.git",
+                    "ref": "main",
+                    "entrypoint": "src/bot.py",
+                    "pat": "synthetic-private-token",
+                },
+            )
+        job = created.json["job"]
+        payload = panel_app.BOT_INSTALL_PAYLOADS[job["id"]]
+
+        with patch.object(
+            panel_app,
+            "_clone_bot_repository",
+            side_effect=RuntimeError("Authentication failed for https://synthetic-private-token@github.com/example/repo.git"),
+        ):
+            panel_app._run_bot_install(job["id"], payload["definition"], payload["pat"], payload["environment"])
+
+        failure = self.client.get("/api/bots/jobs").get_data(as_text=True)
+        self.assertNotIn("synthetic-private-token", failure)
+        self.assertIn("[REDACTED]", failure)
 
     def test_control_route_rejects_unknown_bot_id(self):
         response = self.client.post(f"/api/bot/{'b' * 32}/start")
