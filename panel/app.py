@@ -109,6 +109,7 @@ BOT_RESTART_COUNTS = {}
 BOT_REGISTRY_LOCK = Lock()
 BOT_INSTALL_JOBS = {}
 BOT_INSTALL_JOBS_LOCK = Lock()
+BOT_INSTALL_PAYLOADS = {}
 
 
 def generate_bot_id():
@@ -157,6 +158,34 @@ def _record_bot_job(job_id, status, progress, message, **extra):
             **extra,
         })
         return job
+
+
+def _queue_bot_install(definition, pat, environment, job_id=None):
+    job_id = job_id or secrets.token_hex(8)
+    safe_definition = dict(definition)
+    with BOT_INSTALL_JOBS_LOCK:
+        BOT_INSTALL_PAYLOADS[job_id] = {
+            "definition": safe_definition,
+            "pat": pat,
+            "environment": dict(environment),
+        }
+        job = BOT_INSTALL_JOBS.get(job_id)
+        if job:
+            job.pop("error", None)
+    _record_bot_job(
+        job_id,
+        "queued",
+        0,
+        "Queued for installation...",
+        step="queued",
+        bot_id=safe_definition["id"],
+        bot_name=safe_definition["name"],
+        definition=safe_definition,
+    )
+    thread = threading.Thread(target=_run_bot_install, args=(job_id, safe_definition, pat, environment), daemon=True)
+    thread.start()
+    with BOT_INSTALL_JOBS_LOCK:
+        return dict(BOT_INSTALL_JOBS[job_id])
 
 
 def _run_install_command(command, cwd=None):
@@ -240,13 +269,17 @@ def _run_bot_install(job_id, definition, pat, environment):
         _validate_repo_entrypoint(repo_dir, definition["entrypoint"])
         with BOT_REGISTRY_LOCK:
             registry = get_bot_registry()
-            if not any(bot["id"] == definition["id"] for bot in registry["bots"]):
+            existing_index = next((index for index, bot in enumerate(registry["bots"]) if bot["id"] == definition["id"]), None)
+            if existing_index is None:
                 registry["bots"].append(definition)
-                save_registry(BOT_REGISTRY_PATH, registry)
+            else:
+                registry["bots"][existing_index] = definition
             credentials = {"pat": pat or "", "environment": environment}
             set_bot_credentials(registry, definition["id"], credentials, BOT_CREDENTIALS_KEY)
             save_registry(BOT_REGISTRY_PATH, registry)
-        _record_bot_job(job_id, "success", 100, "Bot installed successfully.", step="complete", bot_id=definition["id"])
+        _record_bot_job(job_id, "success", 100, "Bot installed successfully.", step="complete", bot_id=definition["id"], bot_name=definition["name"], definition=dict(definition))
+        with BOT_INSTALL_JOBS_LOCK:
+            BOT_INSTALL_PAYLOADS.pop(job_id, None)
     except Exception as error:
         _record_bot_job(job_id, "failed", 100, str(error) or "Bot installation failed.", step="error", error=str(error))
 
@@ -1041,11 +1074,8 @@ def bot_registry_collection():
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
 
-    job_id = secrets.token_hex(8)
-    _record_bot_job(job_id, "queued", 0, "Queued for installation...", step="queued", bot_id=None)
-    thread = threading.Thread(target=_run_bot_install, args=(job_id, definition, pat.strip(), environment), daemon=True)
-    thread.start()
-    return jsonify({"success": True, "bot": definition, "job": BOT_INSTALL_JOBS[job_id]}), 202
+    job = _queue_bot_install(definition, pat.strip(), environment)
+    return jsonify({"success": True, "bot": definition, "job": job}), 202
 
 
 @app.route("/api/bots/jobs")
@@ -1064,6 +1094,52 @@ def bot_install_job(job_id):
     if job is None:
         return jsonify({"error": "Unknown job"}), 404
     return jsonify({"job": job})
+
+
+@app.route("/api/bots/jobs/<job_id>/retry", methods=["POST"])
+@login_required
+def retry_bot_install_job(job_id):
+    with BOT_INSTALL_JOBS_LOCK:
+        job = BOT_INSTALL_JOBS.get(job_id)
+        saved_input = BOT_INSTALL_PAYLOADS.get(job_id)
+        if job is None or saved_input is None:
+            return jsonify({"error": "Unknown install job"}), 404
+        if job.get("status") != "failed":
+            return jsonify({"error": "Only failed installs can be retried"}), 409
+        saved_input = {
+            "definition": dict(saved_input["definition"]),
+            "pat": saved_input["pat"],
+            "environment": dict(saved_input["environment"]),
+        }
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Retry payload must be a JSON object"}), 400
+    definition = saved_input["definition"]
+    for field in ("name", "repository", "ref", "entrypoint"):
+        if field in payload:
+            value = payload[field]
+            if not isinstance(value, str):
+                return jsonify({"error": f"{field.capitalize()} must be a string"}), 400
+            definition[field] = value.strip()
+    pat = payload.get("pat", "")
+    if not isinstance(pat, str):
+        return jsonify({"error": "PAT must be a string"}), 400
+    pat = pat.strip() or saved_input["pat"]
+
+    raw_environment = payload.get("environment", "")
+    if not isinstance(raw_environment, (str, dict)):
+        return jsonify({"error": "Environment values must be a mapping or KEY=value string"}), 400
+    try:
+        environment = parse_environment_assignments(raw_environment) if raw_environment else saved_input["environment"]
+        validate_bot_definition(definition)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    job = _queue_bot_install(definition, pat, environment, job_id=job_id)
+    return jsonify({"success": True, "job": job}), 202
 
 
 @app.route("/api/bot/<bot_key>/<action>", methods=["POST"])

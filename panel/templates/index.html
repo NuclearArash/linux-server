@@ -221,6 +221,41 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
     grid-column: 1 / -1;
     min-height: 38px;
 }
+.install-job-card {
+    position: relative;
+    padding: 14px 16px 17px;
+}
+.install-job-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.install-job-actions { display: flex; align-items: center; gap: 8px; }
+.install-job-timer { display: block; width: 20px; height: 20px; flex: 0 0 20px; }
+.install-job-timer circle { fill: none; stroke-width: 2.25; }
+.install-job-timer-track { stroke: rgba(255, 255, 255, .12); }
+.install-job-timer-progress {
+    stroke: var(--accent);
+    stroke-dasharray: 50.27;
+    stroke-dashoffset: 0;
+    transform: rotate(-90deg);
+    transform-origin: 50% 50%;
+    animation: job-expiry 7s linear forwards;
+}
+.install-job-card[data-status="failed"] .install-job-timer-progress { stroke: var(--red); }
+.install-job-card[data-status="success"] .install-job-timer-progress { stroke: var(--green); }
+.install-job-dismiss {
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border-light);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, .035);
+    color: var(--text-secondary);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+}
+.install-job-dismiss:hover { color: var(--text); background: rgba(255, 255, 255, .09); }
+.install-job-card .progress { margin: 0 0 8px; }
+.install-job-card .progress > div { transition: width .35s ease; }
 
 .panel {
     position: relative;
@@ -1072,6 +1107,9 @@ select.field { cursor: pointer; }
     from { opacity: 0; transform: translateY(5px); }
     to { opacity: 1; transform: translateY(0); }
 }
+@keyframes job-expiry {
+    to { stroke-dashoffset: 50.27; }
+}
 @keyframes pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
     50% { opacity: .62; transform: scale(.86); }
@@ -1203,7 +1241,8 @@ select.field { cursor: pointer; }
                     <textarea id="bot-environment" class="field" name="environment" rows="3" placeholder="BOT_TOKEN=value1 OTHER_VAR=value2"></textarea>
                 </label>
                 <div class="inline-actions">
-                    <button class="btn btn-start" type="submit">🚀 Add bot</button>
+                    <button id="add-bot-submit" class="btn btn-start" type="submit">🚀 Add bot</button>
+                    <button id="cancel-bot-retry" class="btn" type="button" hidden>Cancel retry</button>
                     <div id="install-status" class="log-meta" style="min-height: 1.2em;">No install running.</div>
                 </div>
             </form>
@@ -1396,7 +1435,13 @@ const state = {
     tab: 'logs',
     sshCommand: '',
     bots: {},
+    botCardIdentity: null,
     installJobs: [],
+    installJobNodes: new Map(),
+    installJobTimers: new Map(),
+    dismissedInstallJobs: new Set(),
+    retryJobId: null,
+    addBotPanelCloseTimer: null,
     pendingBots: new Set(),   // bots with a start/stop/restart request in flight
     logs: { raw: '', paused: false, target: '', health: 'connecting' },   // health: connecting | live | error
     env: { data: {}, masked: true, notice: '' },
@@ -1889,9 +1934,11 @@ function setConnection(online) {
 
 /** Start is only usable while a bot is stopped, Restart/Stop only while it runs; all three lock during a request. */
 function syncBotButtons(key) {
-    const running = !!state.bots[key]?.running;
-    const busy = state.pendingBots.has(key);
-    document.querySelectorAll(`[data-bot="${key}"][data-action]`).forEach(button => {
+    document.querySelectorAll('[data-bot][data-action]').forEach(button => {
+        const botKey = button.dataset.bot;
+        if (key != null && botKey !== key) return;
+        const running = !!state.bots[botKey]?.running;
+        const busy = state.pendingBots.has(botKey);
         const { action } = button.dataset;
         button.disabled = busy || (action === 'start' && running) || (action === 'restart' && !running) || (action === 'stop' && !running);
     });
@@ -1901,72 +1948,200 @@ function renderBotCards() {
     const grid = $('bot-grid');
     if (!grid) return;
     const entries = Object.entries(state.bots || {});
-    if (!entries.length) {
-        grid.replaceChildren(h('div', { class: 'panel bot-card', style: 'grid-column: 1 / -1;' },
-            h('div', { class: 'bot-header' },
-                h('div', { class: 'bot-identity' },
-                    h('div', { class: 'bot-icon' }, '🤖'),
-                    h('div', {}, h('div', { class: 'bot-name', text: 'No bots yet' }), h('div', { class: 'bot-id', text: 'install a bot from GitHub to begin' }))),
-                h('div', { class: 'status stopped' }, h('span', { class: 'status-dot' }), 'EMPTY')),
-            h('div', { class: 'bot-stats' },
-                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Status' }), h('div', { class: 'stat-value', text: 'waiting' })),
-                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Repo' }), h('div', { class: 'stat-value', text: '—' })),
-                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Runs' }), h('div', { class: 'stat-value', text: '0' })
-            )),
-        ));
-        return;
-    }
+    const identity = JSON.stringify(entries.map(([key, bot]) => [key, bot.name || key]));
 
-    const cards = entries.map(([key, bot]) => {
-        const running = !!bot.running;
-        const card = h('article', { class: 'panel bot-card' },
+    if (identity !== state.botCardIdentity) {
+        state.botCardIdentity = identity;
+        if (!entries.length) {
+            grid.replaceChildren(h('div', { class: 'panel bot-card', style: 'grid-column: 1 / -1;' },
+                h('div', { class: 'bot-header' },
+                    h('div', { class: 'bot-identity' },
+                        h('div', { class: 'bot-icon' }, '🤖'),
+                        h('div', {}, h('div', { class: 'bot-name', text: 'No bots yet' }), h('div', { class: 'bot-id', text: 'install a bot from GitHub to begin' }))),
+                    h('div', { class: 'status stopped' }, h('span', { class: 'status-dot' }), 'EMPTY')),
+                h('div', { class: 'bot-stats' },
+                    h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Status' }), h('div', { class: 'stat-value', text: 'waiting' })),
+                    h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Repo' }), h('div', { class: 'stat-value', text: '—' })),
+                    h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Runs' }), h('div', { class: 'stat-value', text: '0' }))
+                )));
+            return;
+        }
+
+        grid.replaceChildren(...entries.map(([key, bot]) => h('article', { class: 'panel bot-card', 'data-bot-card': key },
             h('div', { class: 'bot-header' },
                 h('div', { class: 'bot-identity' },
                     h('div', { class: 'bot-icon' }, bot.icon || '🤖'),
                     h('div', {},
                         h('div', { class: 'bot-name', text: bot.name || key }),
-                        h('div', { class: 'bot-id', text: key }
-                        ))),
-                h('div', { id: `status-${key}`, class: `status ${running ? 'running' : 'stopped'}` },
-                    h('span', { class: 'status-dot' }), running ? 'RUNNING' : 'STOPPED')),
+                        h('div', { class: 'bot-id', text: key }))),
+                h('div', { class: `status ${bot.running ? 'running' : 'stopped'}`, 'data-bot-status': '' },
+                    h('span', { class: 'status-dot' }), h('span', { 'data-bot-field': 'status', text: bot.running ? 'RUNNING' : 'STOPPED' }))),
             h('div', { class: 'bot-stats' },
-                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'PID' }), h('div', { class: 'stat-value', text: bot.pid || '—' })),
-                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Uptime' }), h('div', { class: 'stat-value', text: bot.uptime || '—' })),
-                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Restarts' }), h('div', { class: 'stat-value', text: bot.restarts ?? 0 }))),
+                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'PID' }), h('div', { class: 'stat-value', 'data-bot-field': 'pid', text: bot.pid || '—' })),
+                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Uptime' }), h('div', { class: 'stat-value', 'data-bot-field': 'uptime', text: bot.uptime || '—' })),
+                h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Restarts' }), h('div', { class: 'stat-value', 'data-bot-field': 'restarts', text: bot.restarts ?? 0 }))),
             h('div', { class: 'bot-actions' },
                 h('button', { class: 'btn btn-start', type: 'button', 'data-bot': key, 'data-action': 'start', text: '▶️ Start' }),
                 h('button', { class: 'btn btn-restart', type: 'button', 'data-bot': key, 'data-action': 'restart', text: '🔄 Restart' }),
-                h('button', { class: 'btn btn-stop', type: 'button', 'data-bot': key, 'data-action': 'stop', text: '⏹️ Stop' }))
-        );
-        return card;
-    });
-    grid.replaceChildren(...cards);
-    document.querySelectorAll('[data-bot][data-action]').forEach(button => {
-        button.onclick = () => controlBot(button.dataset.bot, button.dataset.action);
+                h('button', { class: 'btn btn-stop', type: 'button', 'data-bot': key, 'data-action': 'stop', text: '⏹️ Stop' })))));
+        grid.querySelectorAll('[data-bot][data-action]').forEach(button => {
+            button.onclick = () => controlBot(button.dataset.bot, button.dataset.action);
+        });
+    }
+
+    if (!entries.length) return;
+    entries.forEach(([key, bot]) => {
+        const card = Array.from(grid.children).find(child => child.dataset.botCard === key);
+        if (!card) return;
+        const running = !!bot.running;
+        const status = card.querySelector('[data-bot-status]');
+        status.className = `status ${running ? 'running' : 'stopped'}`;
+        status.querySelector('[data-bot-field="status"]').textContent = running ? 'RUNNING' : 'STOPPED';
+        card.querySelector('[data-bot-field="pid"]').textContent = bot.pid || '—';
+        card.querySelector('[data-bot-field="uptime"]').textContent = bot.uptime || '—';
+        card.querySelector('[data-bot-field="restarts"]').textContent = bot.restarts ?? 0;
     });
     syncBotButtons();
+}
+
+function dismissInstallJob(jobId) {
+    const timer = state.installJobTimers.get(jobId);
+    if (timer) window.clearTimeout(timer);
+    state.installJobTimers.delete(jobId);
+    state.dismissedInstallJobs.add(jobId);
+    state.installJobNodes.get(jobId)?.remove();
+    state.installJobNodes.delete(jobId);
+    const list = $('job-list');
+    if (list && !list.children.length) list.style.display = 'none';
+}
+
+function setAddBotPanelOpen(isOpen) {
+    const panel = $('add-bot-panel');
+    const trigger = $('toggle-add-bot');
+    if (!panel || !trigger) return;
+    window.clearTimeout(state.addBotPanelCloseTimer);
+    if (isOpen) {
+        panel.hidden = false;
+        requestAnimationFrame(() => panel.classList.add('is-open'));
+        trigger.textContent = '− Close';
+        return;
+    }
+    panel.classList.remove('is-open');
+    trigger.textContent = '＋ Add bot';
+    state.addBotPanelCloseTimer = window.setTimeout(() => {
+        if (!panel.classList.contains('is-open')) panel.hidden = true;
+    }, 360);
+}
+
+function resetBotRetryMode(clearForm = false) {
+    state.retryJobId = null;
+    $('add-bot-submit').textContent = '🚀 Add bot';
+    $('cancel-bot-retry').hidden = true;
+    $('bot-pat').placeholder = 'GitHub PAT for private repos';
+    $('bot-environment').placeholder = 'BOT_TOKEN=value1 OTHER_VAR=value2';
+    if (clearForm) {
+        $('add-bot-form').reset();
+        $('bot-ref').value = 'main';
+    }
+}
+
+function prepareBotRetry(jobId) {
+    const job = state.installJobs.find(candidate => candidate.id === jobId);
+    const definition = job?.definition;
+    if (!definition) return;
+    state.retryJobId = jobId;
+    $('bot-name').value = definition.name || '';
+    $('bot-repository').value = definition.repository || '';
+    $('bot-ref').value = definition.ref || 'main';
+    $('bot-entrypoint').value = definition.entrypoint || '';
+    $('bot-pat').value = '';
+    $('bot-pat').placeholder = 'Leave blank to keep the saved PAT';
+    $('bot-environment').value = '';
+    $('bot-environment').placeholder = 'Leave blank to keep saved variables';
+    $('add-bot-submit').textContent = '↻ Retry install';
+    $('cancel-bot-retry').hidden = false;
+    $('install-status').textContent = 'Edit the settings, then retry. Blank secrets are kept.';
+    setAddBotPanelOpen(true);
+    requestAnimationFrame(() => $('bot-entrypoint').focus());
+}
+
+function createInstallJobCard(job) {
+    const terminal = job.status === 'failed' || job.status === 'success';
+    const actions = [];
+    if (job.status === 'failed') {
+        actions.push(h('button', {
+            class: 'btn btn-compact',
+            type: 'button',
+            text: 'Edit & retry',
+            onclick: () => prepareBotRetry(job.id),
+        }));
+    }
+    if (terminal) {
+        actions.push(h('span', {
+            class: 'install-job-timer',
+            html: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle class="install-job-timer-track" cx="10" cy="10" r="8"></circle><circle class="install-job-timer-progress" cx="10" cy="10" r="8"></circle></svg>',
+        }));
+        actions.push(h('button', {
+            class: 'install-job-dismiss',
+            type: 'button',
+            title: 'Dismiss notice',
+            'aria-label': 'Dismiss install notice',
+            onclick: () => dismissInstallJob(job.id),
+        }, '×'));
+    }
+    const children = [
+        h('div', { class: 'install-job-heading' },
+            h('div', { class: 'section-title', style: 'font-size: .95rem;', 'data-job-field': 'title' }),
+            h('div', { class: 'install-job-actions' },
+                h('div', { class: 'section-info', 'data-job-field': 'status' }), ...actions)),
+        h('div', { class: 'progress' }, h('div', { 'data-job-field': 'progress' })),
+        h('div', { class: 'log-meta', 'data-job-field': 'message' }),
+    ];
+    return h('article', { class: 'panel install-job-card', 'data-status': job.status }, ...children);
+}
+
+function updateInstallJobCard(node, job) {
+    node.dataset.status = job.status;
+    node.querySelector('[data-job-field="title"]').textContent = `Install: ${job.bot_name || job.definition?.name || 'Bot'}`;
+    node.querySelector('[data-job-field="status"]').textContent = job.status.toUpperCase();
+    node.querySelector('[data-job-field="progress"]').style.width = `${Math.max(4, job.progress || 0)}%`;
+    node.querySelector('[data-job-field="message"]').textContent = job.message || 'Processing...';
 }
 
 function renderInstallJobs() {
     const list = $('job-list');
     if (!list) return;
-    const jobs = state.installJobs.filter(job => job && (job.status === 'queued' || job.status === 'running' || job.status === 'failed' || job.status === 'success'));
-    if (!jobs.length) {
-        list.style.display = 'none';
-        list.replaceChildren();
-        return;
-    }
-    list.style.display = 'grid';
-    list.replaceChildren(...jobs.map(job => {
-        const jobRow = h('div', { class: 'panel', style: 'padding: 14px 16px;' },
-            h('div', { class: 'section-heading', style: 'margin-bottom: 8px;' },
-                h('div', { class: 'section-title', style: 'font-size: .95rem;', text: `Install: ${job.bot_id || 'new bot'}` }),
-                h('div', { class: 'section-info', text: job.status.toUpperCase() })),
-            h('div', { class: 'progress', style: 'margin-bottom: 8px;' },
-                h('div', { style: `width: ${Math.max(4, job.progress || 0)}%;` })),
-            h('div', { class: 'log-meta', text: job.message || 'Processing...' }));
-        return jobRow;
-    }));
+    const jobs = state.installJobs.filter(job => job && ['queued', 'running', 'failed', 'success'].includes(job.status));
+
+    jobs.forEach(job => {
+        const terminal = job.status === 'failed' || job.status === 'success';
+        if (terminal && state.dismissedInstallJobs.has(job.id)) return;
+
+        let node = state.installJobNodes.get(job.id);
+        const previousStatus = node?.dataset.status;
+        const wasTerminal = previousStatus === 'failed' || previousStatus === 'success';
+        const failedDuringThisSession = job.status === 'failed' && (previousStatus === 'queued' || previousStatus === 'running');
+        const needsNewCard = !node || (terminal !== wasTerminal) || (terminal && previousStatus !== job.status);
+        if (needsNewCard) {
+            if (node) node.remove();
+            if (wasTerminal) {
+                window.clearTimeout(state.installJobTimers.get(job.id));
+                state.installJobTimers.delete(job.id);
+            }
+            if (!terminal) state.dismissedInstallJobs.delete(job.id);
+            node = createInstallJobCard(job);
+            state.installJobNodes.set(job.id, node);
+            list.append(node);
+        }
+        updateInstallJobCard(node, job);
+
+        if (terminal && !wasTerminal) {
+            state.installJobTimers.set(job.id, window.setTimeout(() => dismissInstallJob(job.id), 7000));
+            if (failedDuringThisSession) prepareBotRetry(job.id);
+        }
+    });
+
+    list.style.display = list.children.length ? 'grid' : 'none';
 }
 
 async function refreshInstallJobs() {
@@ -2858,33 +3033,21 @@ async function redeployServer(button) {
 /* 8. Init ------------------------------------------------------------------- */
 async function addBot(event) {
     event.preventDefault();
-    const form = event.currentTarget;
     const name = $('bot-name').value.trim();
     const repository = $('bot-repository').value.trim();
     const ref = $('bot-ref').value.trim() || 'main';
     const entrypoint = $('bot-entrypoint').value.trim();
     const pat = $('bot-pat').value.trim();
     const environment = $('bot-environment').value.trim();
+    const retryJobId = state.retryJobId;
 
     try {
-        const data = await apiJson('/api/bots', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, repository, ref, entrypoint, pat, environment })
-        }, 'Could not add bot');
-        showToast(`Bot queued: ${data.bot?.name || name}`);
-        form.reset();
-        $('bot-ref').value = 'main';
+        const endpoint = retryJobId ? `/api/bots/jobs/${encodeURIComponent(retryJobId)}/retry` : '/api/bots';
+        const data = await apiJson(endpoint, jsonOptions('POST', { name, repository, ref, entrypoint, pat, environment }), 'Could not add bot');
+        showToast(`${retryJobId ? 'Retry queued' : 'Bot queued'}: ${data.bot?.name || data.job?.bot_name || name}`);
+        resetBotRetryMode(true);
         $('install-status').textContent = `Queued: ${data.job?.status || 'pending'}`;
-        const panel = $('add-bot-panel');
-        if (panel) {
-            panel.classList.remove('is-open');
-            window.setTimeout(() => {
-                panel.hidden = true;
-            }, 360);
-        }
-        const trigger = $('toggle-add-bot');
-        if (trigger) trigger.textContent = '＋ Add bot';
+        setAddBotPanelOpen(false);
         await refreshInstallJobs();
         await refreshStatus();
     } catch (error) {
@@ -2898,28 +3061,19 @@ function bindEvents() {
     $('redeploy-btn').addEventListener('click', event => redeployServer(event.currentTarget));
     $('toggle-add-bot').addEventListener('click', () => {
         const panel = $('add-bot-panel');
-        const trigger = $('toggle-add-bot');
-        if (!panel || !trigger) return;
+        if (!panel) return;
         const isOpen = panel.classList.contains('is-open');
-
-        if (isOpen) {
-            panel.classList.remove('is-open');
-            trigger.textContent = '＋ Add bot';
-            window.setTimeout(() => {
-                panel.hidden = true;
-            }, 360);
-            return;
-        }
-
-        panel.hidden = false;
-        requestAnimationFrame(() => {
-            panel.classList.add('is-open');
-            trigger.textContent = '− Close';
+        setAddBotPanelOpen(!isOpen);
+        if (!isOpen) {
             requestAnimationFrame(() => {
-                const firstField = $('bot-name');
-                if (firstField) firstField.focus();
+                $('bot-name').focus();
             });
-        });
+        }
+    });
+    $('cancel-bot-retry').addEventListener('click', () => {
+        resetBotRetryMode(true);
+        $('install-status').textContent = 'No install running.';
+        $('bot-name').focus();
     });
     $('copy-ssh-btn').addEventListener('click', () => (state.sshCommand
         ? copyText(state.sshCommand, 'SSH command copied to clipboard!')
