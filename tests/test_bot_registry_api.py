@@ -58,6 +58,63 @@ class BotRegistryApiTests(unittest.TestCase):
         registry["bots"].append(definition)
         return registry, definition
 
+    def test_file_search_returns_matching_files_and_folders_below_current_path(self):
+        current = self.root / "workspace"
+        nested = current / "nested"
+        match_folder = current / "Needle Folder"
+        nested.mkdir(parents=True)
+        match_folder.mkdir()
+        root_match = current / "needle.txt"
+        nested_match = nested / "needles.py"
+        outside_match = self.root / "outside-needle.txt"
+        root_match.write_text("root", encoding="utf-8")
+        nested_match.write_text("nested", encoding="utf-8")
+        outside_match.write_text("outside", encoding="utf-8")
+
+        response = self.client.get(
+            "/api/files/search",
+            query_string={"path": str(current), "q": "needle"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            {entry["path"] for entry in response.json["entries"]},
+            {str(root_match), str(nested_match), str(match_folder)},
+        )
+        self.assertFalse(response.json["truncated"])
+
+    def test_delete_file_explorer_entry_removes_file_or_folder(self):
+        current = self.root / "workspace"
+        current.mkdir()
+        file_path = current / "remove.txt"
+        folder_path = current / "remove-folder"
+        nested_path = folder_path / "nested.txt"
+        file_path.write_text("remove", encoding="utf-8")
+        folder_path.mkdir()
+        nested_path.write_text("remove", encoding="utf-8")
+
+        for target in (file_path, nested_path, folder_path):
+            response = self.client.post(
+                "/api/files/delete",
+                json={"path": str(target), "current_path": str(current)},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(target.exists())
+
+    def test_delete_file_explorer_entry_rejects_paths_outside_current_directory(self):
+        current = self.root / "workspace"
+        current.mkdir()
+        sibling = self.root / "keep.txt"
+        sibling.write_text("keep", encoding="utf-8")
+
+        response = self.client.post(
+            "/api/files/delete",
+            json={"path": str(sibling), "current_path": str(current)},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(sibling.exists())
+
     def test_status_reports_empty_fleet_without_default_bots(self):
         with (
             patch.object(panel_app.psutil, "cpu_percent", return_value=0),
@@ -106,6 +163,35 @@ class BotRegistryApiTests(unittest.TestCase):
         self.assertEqual(github_get.call_count, 3)
         self.assertEqual(github_get.call_args_list[0].kwargs["headers"]["Authorization"], "Bearer synthetic-pat")
         self.assertNotIn("synthetic-pat", response.get_data(as_text=True))
+
+    def test_repository_metadata_uses_saved_pat_for_editing_bot(self):
+        registry, definition = self.add_bot()
+        set_bot_credentials(
+            registry,
+            definition["id"],
+            {"pat": "synthetic-saved-pat", "environment": {"BOT_TOKEN": "synthetic-bot-token"}},
+            panel_app.BOT_CREDENTIALS_KEY,
+        )
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+        responses = [
+            Mock(status_code=200, json=Mock(return_value={"default_branch": "main"})),
+            Mock(status_code=200, json=Mock(return_value=[{"name": "main"}])),
+            Mock(status_code=200, json=Mock(return_value={"truncated": False, "tree": [{"path": "src/bot.py", "type": "blob"}]})),
+        ]
+        with patch.object(panel_app.requests, "get", side_effect=responses) as github_get:
+            response = self.client.post(
+                "/api/github/repository-metadata",
+                json={
+                    "repository": definition["repository"],
+                    "bot_id": definition["id"],
+                    "pat": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(github_get.call_args_list[0].kwargs["headers"]["Authorization"], "Bearer synthetic-saved-pat")
+        self.assertNotIn("synthetic-saved-pat", response.get_data(as_text=True))
+        self.assertNotIn("synthetic-bot-token", response.get_data(as_text=True))
 
     def test_repository_metadata_rejects_non_github_hosts(self):
         with patch.object(panel_app.requests, "get") as github_get:
@@ -180,7 +266,35 @@ class BotRegistryApiTests(unittest.TestCase):
         self.assertIn("bot", response.json)
         self.assertEqual(response.json["job"]["bot_name"], "Example Bot")
         self.assertEqual(response.json["job"]["definition"]["entrypoint"], "src/bot.py")
+        self.assertEqual(response.json["bot"]["directory_name"], "Example Bot")
         self.assertNotIn("synthetic-token", response.get_data(as_text=True))
+
+    def test_bot_info_uses_named_directory_and_legacy_id_fallback(self):
+        _, definition = self.add_bot()
+        named_definition = {**definition, "directory_name": "Example Bot"}
+
+        self.assertEqual(
+            panel_app.get_bot_info(named_definition)["dir"],
+            str(self.root / "bots" / "Example Bot"),
+        )
+        self.assertEqual(
+            panel_app.get_bot_info(definition)["dir"],
+            str(self.root / "bots" / definition["id"]),
+        )
+
+    def test_add_bot_rejects_directory_name_already_reserved_by_queued_install(self):
+        payload = {
+            "name": "Example Bot",
+            "repository": "https://github.com/example/telegram-bot.git",
+            "ref": "main",
+            "entrypoint": "src/bot.py",
+        }
+        with patch.object(panel_app.threading.Thread, "start"):
+            first = self.client.post("/api/bots", json=payload)
+            second = self.client.post("/api/bots", json=payload)
+
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 409)
 
     def test_edit_bot_updates_fields_env_and_icon_without_revealing_pat(self):
         registry, definition = self.add_bot()
@@ -242,6 +356,38 @@ class BotRegistryApiTests(unittest.TestCase):
         self.assertNotIn("synthetic-private-token", response.get_data(as_text=True))
         self.assertFalse(panel_app.get_bot_registry()["bots"][0]["enabled"])
 
+    def test_start_bot_process_launches_bot_and_marks_it_enabled(self):
+        registry, definition = self.add_bot()
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+        bot_dir = self.root / "bots" / definition["id"]
+        entrypoint = bot_dir / "src" / "bot.py"
+        entrypoint.parent.mkdir(parents=True)
+        entrypoint.write_text("print('started')", encoding="utf-8")
+        venv_python = bot_dir / ".venv" / "bin" / "python"
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_text("", encoding="utf-8")
+        info = {
+            **definition,
+            "dir": str(bot_dir),
+            "entry": definition["entrypoint"],
+            "pid_path": str(self.root / "bot.pid"),
+            "log_path": str(self.root / "bot.log"),
+            "venv_python": str(venv_python),
+        }
+
+        with (
+            patch.object(panel_app, "get_bot_info", return_value=info),
+            patch.object(panel_app, "get_bot_proc", return_value=None),
+            patch.object(panel_app.subprocess, "Popen", return_value=SimpleNamespace(pid=12345)) as process_start,
+        ):
+            status, message = panel_app.start_bot_process(definition["id"], definition)
+
+        self.assertEqual(status, 200)
+        self.assertEqual(message, "Example Bot started")
+        self.assertTrue(panel_app.get_bot_registry()["bots"][0]["enabled"])
+        self.assertEqual((self.root / "bot.pid").read_text(encoding="ascii"), "12345")
+        process_start.assert_called_once()
+
     def test_update_worker_swaps_in_complete_staged_checkout(self):
         registry, definition = self.add_bot()
         save_registry(panel_app.BOT_REGISTRY_PATH, registry)
@@ -257,16 +403,22 @@ class BotRegistryApiTests(unittest.TestCase):
             entrypoint.parent.mkdir(parents=True, exist_ok=True)
             entrypoint.write_text("new", encoding="utf-8")
 
+        def start_updated_bot(bot_key, _definition):
+            panel_app.set_bot_enabled(bot_key, True)
+            return 200, "Example Bot started"
+
         with (
             patch.object(panel_app, "_clone_bot_repository", side_effect=clone_to_staging),
             patch.object(panel_app, "_install_bot_dependencies"),
+            patch.object(panel_app, "start_bot_process", side_effect=start_updated_bot, create=True) as start_bot,
         ):
             panel_app._run_bot_update(job_id, definition, "", {})
 
         self.assertFalse((current_dir / "old-version.txt").exists())
         self.assertEqual((current_dir / "src" / "bot.py").read_text(encoding="utf-8"), "new")
         self.assertEqual(panel_app.BOT_INSTALL_JOBS[job_id]["status"], "success")
-        self.assertFalse(panel_app.get_bot_registry()["bots"][0]["enabled"])
+        start_bot.assert_called_once_with(definition["id"], definition)
+        self.assertTrue(panel_app.get_bot_registry()["bots"][0]["enabled"])
 
     def test_update_worker_preserves_existing_checkout_when_clone_fails(self):
         registry, definition = self.add_bot()

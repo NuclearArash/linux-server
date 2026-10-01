@@ -4,6 +4,7 @@ import time
 import signal
 import secrets
 import shutil
+import stat
 import sys
 from html import escape
 import threading
@@ -322,7 +323,7 @@ def _run_install_command(command, cwd=None):
 
 
 def _clone_bot_repository(job_id, definition, pat, repo_dir=None):
-    repo_dir = repo_dir or os.path.join(BASE_DIR, "bots", definition["id"])
+    repo_dir = repo_dir or os.path.join(BASE_DIR, "bots", get_bot_directory_name(definition))
     os.makedirs(os.path.dirname(repo_dir), exist_ok=True)
     if os.path.exists(repo_dir):
         shutil.rmtree(repo_dir)
@@ -342,7 +343,7 @@ def _clone_bot_repository(job_id, definition, pat, repo_dir=None):
 
 
 def _install_bot_dependencies(job_id, definition, repo_dir=None):
-    repo_dir = repo_dir or os.path.join(BASE_DIR, "bots", definition["id"])
+    repo_dir = repo_dir or os.path.join(BASE_DIR, "bots", get_bot_directory_name(definition))
     venv_dir = os.path.join(repo_dir, ".venv")
     py_executable = os.path.join(venv_dir, "Scripts", "python.exe") if os.name == "nt" else os.path.join(venv_dir, "bin", "python")
     if not os.path.exists(py_executable):
@@ -380,7 +381,7 @@ def _run_bot_update(job_id, definition, pat, environment):
 
     bots_root = os.path.realpath(os.path.join(BASE_DIR, "bots"))
     bot_id = definition["id"]
-    target_dir = os.path.join(bots_root, bot_id)
+    target_dir = os.path.join(bots_root, get_bot_directory_name(definition))
     if os.path.commonpath([bots_root, os.path.realpath(target_dir)]) != bots_root or os.path.islink(target_dir):
         _record_bot_job(job_id, "failed", 100, "Bot directory failed its safety check.", step="error", error="Bot directory failed its safety check.")
         return
@@ -401,7 +402,7 @@ def _run_bot_update(job_id, definition, pat, environment):
             current = get_bot_definition(bot_id, registry)
             if current is None:
                 raise ValueError("Bot was removed while its update was running")
-            tracked_fields = ("name", "repository", "ref", "entrypoint")
+            tracked_fields = ("name", "repository", "ref", "entrypoint", "directory_name")
             if any(current.get(field) != definition.get(field) for field in tracked_fields):
                 raise ValueError("Bot settings changed while its update was running; run Update again")
 
@@ -421,11 +422,14 @@ def _run_bot_update(job_id, definition, pat, environment):
         if backup_created:
             shutil.rmtree(backup_dir, ignore_errors=True)
             backup_created = False
+        start_status, start_message = start_bot_process(bot_id, definition)
+        if start_status != 200:
+            raise RuntimeError(f"Bot updated successfully but automatic restart failed: {start_message}")
         _record_bot_job(
             job_id,
             "success",
             100,
-            "Bot updated successfully. It remains stopped; start it when ready.",
+            "Bot updated and restarted successfully.",
             step="complete",
             bot_id=bot_id,
             bot_name=definition["name"],
@@ -460,7 +464,7 @@ def _run_bot_install(job_id, definition, pat, environment):
             raise RuntimeError("Bot credential encryption key is not configured")
         _clone_bot_repository(job_id, definition, pat)
         _install_bot_dependencies(job_id, definition)
-        repo_dir = os.path.join(BASE_DIR, "bots", definition["id"])
+        repo_dir = os.path.join(BASE_DIR, "bots", get_bot_directory_name(definition))
         _validate_repo_entrypoint(repo_dir, definition["entrypoint"])
         with BOT_REGISTRY_LOCK:
             registry = get_bot_registry()
@@ -492,8 +496,12 @@ def get_bot_definition(bot_key, registry=None):
     return next((bot for bot in registry["bots"] if bot["id"] == bot_key), None)
 
 
+def get_bot_directory_name(definition):
+    return definition.get("directory_name") or definition["id"]
+
+
 def get_bot_info(definition):
-    bot_dir = os.path.join(BASE_DIR, "bots", definition["id"])
+    bot_dir = os.path.join(BASE_DIR, "bots", get_bot_directory_name(definition))
     return {
         **definition,
         "dir": bot_dir,
@@ -684,6 +692,59 @@ def stop_bot_process(bot_key, definition=None):
     except OSError:
         return False
     return True
+
+
+def start_bot_process(bot_key, definition=None):
+    definition = definition or get_bot_definition(bot_key)
+    if definition is None:
+        return 404, "Unknown bot"
+    if get_bot_proc(bot_key) is not None:
+        return 409, "Bot is already running"
+
+    info = get_bot_info(definition)
+    repo_root = os.path.realpath(info["dir"])
+    entrypoint_path = os.path.realpath(os.path.join(repo_root, *info["entry"].split("/")))
+    try:
+        entrypoint_is_contained = os.path.commonpath([repo_root, entrypoint_path]) == repo_root
+    except ValueError:
+        entrypoint_is_contained = False
+    if not entrypoint_is_contained or not os.path.isfile(entrypoint_path):
+        return 409, "Bot entrypoint is missing or outside its repository"
+    if not os.path.isfile(info["venv_python"]):
+        return 409, "Bot environment is not installed"
+
+    registry = get_bot_registry()
+    try:
+        credentials = get_bot_credentials(registry, bot_key, BOT_CREDENTIALS_KEY)
+    except ValueError:
+        return 503, "Bot credentials are unavailable"
+
+    bot_environment = {
+        "PATH": os.pathsep.join((os.path.dirname(info["venv_python"]), os.environ.get("PATH", ""))),
+        "HOME": os.path.expanduser("~"),
+        "USER": os.environ.get("USER", "runner"),
+        "LANG": "C.UTF-8",
+        "VIRTUAL_ENV": os.path.dirname(os.path.dirname(info["venv_python"])),
+        **credentials["environment"],
+    }
+    try:
+        with open(info["log_path"], "ab") as log_file:
+            process = subprocess.Popen(
+                [info["venv_python"], "-u", entrypoint_path],
+                cwd=repo_root,
+                env=bot_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        with open(info["pid_path"], "w", encoding="ascii") as pid_file:
+            pid_file.write(str(process.pid))
+        set_bot_enabled(bot_key, True)
+    except (OSError, ValueError):
+        return 503, "Bot could not be started"
+
+    return 200, f"{info['name']} started"
 
 
 def get_bot_statuses(registry=None):
@@ -1266,10 +1327,22 @@ def github_repository_metadata():
         return jsonify({"error": "Repository metadata payload must be a JSON object"}), 400
     repository = payload.get("repository", "")
     pat = payload.get("pat", "")
+    bot_id = payload.get("bot_id")
     ref = payload.get("ref")
     include_branches = payload.get("include_branches", True)
     if not isinstance(pat, str) or len(pat) > 500 or "\n" in pat or "\r" in pat:
         return jsonify({"error": "PAT is invalid"}), 400
+    if bot_id is not None:
+        if not isinstance(bot_id, str):
+            return jsonify({"error": "Bot ID is invalid"}), 400
+        registry = get_bot_registry()
+        if get_bot_definition(bot_id, registry) is None:
+            return jsonify({"error": "Unknown bot"}), 404
+        if not pat.strip():
+            try:
+                pat = get_bot_credentials(registry, bot_id, BOT_CREDENTIALS_KEY)["pat"]
+            except ValueError:
+                return jsonify({"error": "Saved bot credentials are unavailable"}), 503
     if ref is not None and not isinstance(ref, str):
         return jsonify({"error": "Branch must be a string"}), 400
     if not isinstance(include_branches, bool):
@@ -1330,6 +1403,7 @@ def bot_registry_collection():
     definition = {
         "id": generate_bot_id(),
         "name": name.strip(),
+        "directory_name": name.strip(),
         "repository": repository.strip(),
         "ref": ref.strip(),
         "entrypoint": entrypoint.strip(),
@@ -1341,7 +1415,23 @@ def bot_registry_collection():
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
 
-    job = _queue_bot_install(definition, pat.strip(), environment)
+    with BOT_REGISTRY_LOCK:
+        registry = get_bot_registry()
+        directory_key = os.path.normcase(definition["directory_name"])
+        occupied_names = {
+            os.path.normcase(get_bot_directory_name(bot))
+            for bot in registry["bots"]
+        }
+        with BOT_INSTALL_JOBS_LOCK:
+            occupied_names.update(
+                os.path.normcase(get_bot_directory_name(job["definition"]))
+                for job in BOT_INSTALL_JOBS.values()
+                if job.get("status") in {"queued", "running"} and job.get("definition")
+            )
+        directory_path = os.path.join(BASE_DIR, "bots", definition["directory_name"])
+        if directory_key in occupied_names or os.path.lexists(directory_path):
+            return jsonify({"error": "A bot already uses this folder name; choose a different bot name"}), 409
+        job = _queue_bot_install(definition, pat.strip(), environment)
     return jsonify({"success": True, "bot": definition, "job": job}), 202
 
 
@@ -1456,7 +1546,7 @@ def delete_bot(bot_key):
                 return jsonify({"error": "An install or update is running for this bot"}), 409
 
         bots_root = os.path.realpath(os.path.join(BASE_DIR, "bots"))
-        bot_dir = os.path.join(bots_root, bot_key)
+        bot_dir = os.path.join(bots_root, get_bot_directory_name(definition))
         resolved_bot_dir = os.path.realpath(bot_dir)
         try:
             is_contained = os.path.commonpath([bots_root, resolved_bot_dir]) == bots_root
@@ -1652,54 +1742,13 @@ def control_bot(bot_key, action):
             set_bot_enabled(bot_key, False)
             return jsonify({"success": True, "message": f"{info['name']} stopped"})
 
-    if action == "start" and proc is not None:
-        return jsonify({"error": "Bot is already running"}), 409
-
-    repo_root = os.path.realpath(info["dir"])
-    entrypoint_path = os.path.realpath(os.path.join(repo_root, *info["entry"].split("/")))
-    try:
-        entrypoint_is_contained = os.path.commonpath([repo_root, entrypoint_path]) == repo_root
-    except ValueError:
-        entrypoint_is_contained = False
-    if not entrypoint_is_contained or not os.path.isfile(entrypoint_path):
-        return jsonify({"error": "Bot entrypoint is missing or outside its repository"}), 409
-    if not os.path.isfile(info["venv_python"]):
-        return jsonify({"error": "Bot environment is not installed"}), 409
-
-    registry = get_bot_registry()
-    try:
-        credentials = get_bot_credentials(registry, bot_key, BOT_CREDENTIALS_KEY)
-    except ValueError:
-        return jsonify({"error": "Bot credentials are unavailable"}), 503
-
-    bot_environment = {
-        "PATH": os.pathsep.join((os.path.dirname(info["venv_python"]), os.environ.get("PATH", ""))),
-        "HOME": os.path.expanduser("~"),
-        "USER": os.environ.get("USER", "runner"),
-        "LANG": "C.UTF-8",
-        "VIRTUAL_ENV": os.path.dirname(os.path.dirname(info["venv_python"])),
-        **credentials["environment"],
-    }
-    try:
-        with open(info["log_path"], "ab") as log_file:
-            process = subprocess.Popen(
-                [info["venv_python"], "-u", entrypoint_path],
-                cwd=repo_root,
-                env=bot_environment,
-                stdin=subprocess.DEVNULL,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-        with open(info["pid_path"], "w", encoding="ascii") as pid_file:
-            pid_file.write(str(process.pid))
-        set_bot_enabled(bot_key, True)
-    except (OSError, ValueError):
-        return jsonify({"error": "Bot could not be started"}), 503
+    start_status, start_message = start_bot_process(bot_key, definition)
+    if start_status != 200:
+        return jsonify({"error": start_message}), start_status
 
     if action == "restart":
         BOT_RESTART_COUNTS[bot_key] = BOT_RESTART_COUNTS.get(bot_key, 0) + 1
-    return jsonify({"success": True, "message": f"{info['name']} started"})
+    return jsonify({"success": True, "message": start_message})
 
 @app.route("/api/files")
 @login_required
@@ -1747,6 +1796,164 @@ def list_files():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+def _file_explorer_roots():
+    return [os.path.realpath(os.path.expanduser("~")), os.path.realpath("/tmp")]
+
+
+def _path_is_within_root(path, root):
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
+
+
+def _resolve_file_explorer_path(path):
+    resolved_path = os.path.realpath(os.path.abspath(path))
+    if any(_path_is_within_root(resolved_path, root) for root in _file_explorer_roots()):
+        return resolved_path
+    return None
+
+
+def _file_explorer_entry_is_owned(entry_stat, path):
+    get_uid = getattr(os, "getuid", None)
+    if callable(get_uid):
+        return entry_stat.st_uid == get_uid()
+    home = os.path.realpath(os.path.expanduser("~"))
+    return _path_is_within_root(path, home) and path != home
+
+
+@app.route("/api/files/search")
+@login_required
+def search_files():
+    requested_path = request.args.get("path") or BASE_DIR
+    query = request.args.get("q", "").strip()
+    if not query or len(query) > 200:
+        return jsonify({"error": "Search must be between 1 and 200 characters"}), 400
+
+    target_path = _resolve_file_explorer_path(requested_path)
+    if target_path is None:
+        return jsonify({"error": "Access denied"}), 403
+    if not os.path.isdir(target_path):
+        return jsonify({"error": "Directory not found"}), 404
+
+    entries = []
+    truncated = False
+    result_limit = 1000
+    try:
+        for current_path, directories, files in os.walk(target_path, followlinks=False):
+            directories[:] = [
+                name for name in directories
+                if not name.startswith(".venv")
+                and name != "__pycache__"
+                and not os.path.islink(os.path.join(current_path, name))
+            ]
+            candidates = [(name, True) for name in directories]
+            candidates.extend(
+                (name, False)
+                for name in files
+                if not name.startswith(".venv") and name != "__pycache__"
+            )
+            for name, is_dir in candidates:
+                if query.casefold() not in name.casefold():
+                    continue
+                entry_path = os.path.join(current_path, name)
+                try:
+                    entry_stat = os.lstat(entry_path)
+                except OSError:
+                    continue
+                if stat.S_ISLNK(entry_stat.st_mode):
+                    continue
+                if len(entries) >= result_limit:
+                    truncated = True
+                    break
+                relative_path = os.path.relpath(entry_path, target_path).replace(os.sep, "/")
+                entries.append({
+                    "name": name,
+                    "relative_path": relative_path,
+                    "path": entry_path,
+                    "is_dir": is_dir,
+                    "size_bytes": 0 if is_dir else entry_stat.st_size,
+                })
+            if truncated:
+                break
+    except OSError:
+        return jsonify({"error": "Could not search this directory"}), 403
+
+    entries.sort(key=lambda entry: (0 if entry["is_dir"] else 1, entry["relative_path"].lower()))
+    return jsonify({"current_path": target_path, "entries": entries, "truncated": truncated})
+
+
+@app.route("/api/files/delete", methods=["POST"])
+@login_required
+def delete_file():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Delete payload must be an object"}), 400
+    requested_path = payload.get("path")
+    requested_parent = payload.get("current_path")
+    if not isinstance(requested_path, str) or not isinstance(requested_parent, str):
+        return jsonify({"error": "File path and current directory are required"}), 400
+    if len(requested_path) > 4096 or len(requested_parent) > 4096:
+        return jsonify({"error": "File path is too long"}), 400
+
+    parent_path = _resolve_file_explorer_path(requested_parent)
+    if parent_path is None:
+        app.logger.warning("Rejected file deletion with an out-of-root parent: %s", requested_parent)
+        return jsonify({"error": "Access denied"}), 403
+    if not os.path.isdir(parent_path):
+        return jsonify({"error": "Current directory not found"}), 404
+
+    absolute_path = os.path.abspath(requested_path)
+    name = os.path.basename(absolute_path)
+    entry_parent = os.path.realpath(os.path.dirname(absolute_path))
+    if not name or name in {".", ".."} or not _path_is_within_root(entry_parent, parent_path):
+        app.logger.warning("Rejected file deletion outside the current directory: %s", requested_path)
+        return jsonify({"error": "Items can only be deleted from the current directory or its descendants"}), 403
+
+    target_path = os.path.join(entry_parent, name)
+    resolved_target = _resolve_file_explorer_path(target_path)
+    if (
+        resolved_target is None
+        or resolved_target == parent_path
+        or not _path_is_within_root(resolved_target, parent_path)
+        or resolved_target in _file_explorer_roots()
+        or os.path.islink(target_path)
+    ):
+        app.logger.warning("Rejected unsafe file deletion target: %s", requested_path)
+        return jsonify({"error": "Access denied"}), 403
+    if name not in os.listdir(entry_parent):
+        return jsonify({"error": "File not found"}), 404
+
+    try:
+        if os.name == "posix" and shutil.rmtree.avoids_symlink_attacks:
+            parent_fd = os.open(entry_parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                entry_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                if stat.S_ISLNK(entry_stat.st_mode) or not _file_explorer_entry_is_owned(entry_stat, resolved_target):
+                    return jsonify({"error": "Access denied"}), 403
+                if stat.S_ISDIR(entry_stat.st_mode):
+                    shutil.rmtree(name, dir_fd=parent_fd)
+                else:
+                    os.unlink(name, dir_fd=parent_fd)
+            finally:
+                os.close(parent_fd)
+        else:
+            entry_stat = os.lstat(target_path)
+            if stat.S_ISLNK(entry_stat.st_mode) or not _file_explorer_entry_is_owned(entry_stat, resolved_target):
+                return jsonify({"error": "Access denied"}), 403
+            if stat.S_ISDIR(entry_stat.st_mode):
+                shutil.rmtree(target_path)
+            else:
+                os.remove(target_path)
+    except FileNotFoundError:
+        return jsonify({"error": "File not found"}), 404
+    except OSError:
+        return jsonify({"error": "Could not delete this item"}), 503
+
+    return jsonify({"success": True, "path": target_path})
+
 
 @app.route("/api/file/content")
 @login_required

@@ -9,7 +9,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 REGISTRY_VERSION = 1
 BOT_FIELDS = {"id", "name", "repository", "ref", "entrypoint", "enabled"}
-BOT_OPTIONAL_FIELDS = {"icon"}
+BOT_OPTIONAL_FIELDS = {"icon", "directory_name"}
 BOT_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 GITHUB_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -33,6 +33,21 @@ def validate_bot_definition(definition):
     name = definition["name"]
     if not isinstance(name, str) or not name.strip() or len(name) > 80:
         raise ValueError("Bot name must contain 1 to 80 characters")
+
+    if "directory_name" in definition:
+        directory_name = definition["directory_name"]
+        reserved_names = {"CON", "PRN", "AUX", "NUL", *(f"COM{index}" for index in range(1, 10)), *(f"LPT{index}" for index in range(1, 10))}
+        if (
+            not isinstance(directory_name, str)
+            or not directory_name
+            or len(directory_name) > 80
+            or directory_name != directory_name.strip()
+            or directory_name in {".", ".."}
+            or directory_name.endswith((" ", "."))
+            or any(ord(character) < 32 or character in '<>:"/\\|?*' for character in directory_name)
+            or directory_name.split(".", 1)[0].upper() in reserved_names
+        ):
+            raise ValueError("Bot directory name must be a safe filesystem name")
 
     repository = definition["repository"]
     if not isinstance(repository, str):
@@ -102,11 +117,17 @@ def validate_registry(registry):
         raise ValueError("Bot registry bots field must be a list")
 
     seen_ids = set()
+    seen_directories = set()
     for definition in registry["bots"]:
         validate_bot_definition(definition)
         if definition["id"] in seen_ids:
             raise ValueError("Bot registry contains a duplicate ID")
         seen_ids.add(definition["id"])
+        directory_name = definition.get("directory_name", definition["id"])
+        directory_key = os.path.normcase(directory_name)
+        if directory_key in seen_directories:
+            raise ValueError("Bot registry contains a duplicate directory name")
+        seen_directories.add(directory_key)
 
     credentials = registry["encrypted_credentials"]
     if not isinstance(credentials, dict):

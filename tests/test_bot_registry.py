@@ -35,6 +35,28 @@ class BotRegistryTests(unittest.TestCase):
     def test_accepts_a_valid_bot_definition(self):
         validate_bot_definition(self.definition)
 
+    def test_accepts_a_safe_directory_name(self):
+        validate_bot_definition({**self.definition, "directory_name": "Example Bot"})
+
+    def test_rejects_unsafe_directory_names(self):
+        for directory_name in (".", "..", "../outside", "nested/bot", "nested\\bot", "NUL"):
+            with self.subTest(directory_name=directory_name):
+                definition = {**self.definition, "directory_name": directory_name}
+                with self.assertRaises(ValueError):
+                    validate_bot_definition(definition)
+
+    def test_rejects_duplicate_directory_names(self):
+        from panel.bot_registry import validate_registry
+
+        registry = empty_registry()
+        registry["bots"] = [
+            {**self.definition, "directory_name": "Example Bot"},
+            {**self.definition, "id": "b" * 32, "directory_name": "Example Bot"},
+        ]
+
+        with self.assertRaises(ValueError):
+            validate_registry(registry)
+
     def test_rejects_non_github_repository_urls(self):
         invalid_urls = [
             "http://github.com/example/bot.git",

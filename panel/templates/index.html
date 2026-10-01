@@ -316,6 +316,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
     height: 28px;
     display: grid;
     place-items: center;
+    padding: 0;
     border: 1px solid var(--border-light);
     border-radius: 7px;
     background: rgba(255, 255, 255, .035);
@@ -699,11 +700,21 @@ select.field { cursor: pointer; }
 .env-table td:first-child { color: var(--accent); }
 .env-table .env-empty { color: var(--text-muted); }
 
+.file-toolbar { flex-wrap: wrap; }
+.file-toolbar #current-file-path {
+    flex: 1 1 220px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.file-toolbar #file-search { flex: 1 1 220px; width: auto; min-width: 160px; max-width: 320px; }
 .file-list { display: flex; flex-direction: column; gap: 5px; margin-top: 2px; }
 .file-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 10px;
     min-height: 39px;
     padding: 8px 12px;
     border: 1px solid var(--hairline);
@@ -715,7 +726,25 @@ select.field { cursor: pointer; }
     transition: background .15s ease, border-color .15s ease, transform .15s ease;
 }
 .file-item:hover { transform: translateX(2px); border-color: rgba(56, 189, 248, .16); background: rgba(56, 189, 248, .045); }
-.file-icon { margin-right: 8px; color: var(--accent); }
+.file-item-main { display: flex; align-items: center; flex: 1; min-width: 0; }
+.file-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-item-end { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.file-icon { flex: 0 0 auto; margin-right: 8px; color: var(--accent); }
+.file-delete-btn {
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.file-delete-btn:hover { border-color: rgba(255, 107, 129, .2); background: rgba(255, 107, 129, .08); color: var(--red); }
+.file-delete-btn svg { display: block; }
+.file-empty { padding: 12px 4px; color: var(--text-muted); font-family: var(--mono); font-size: 11px; }
 .file-preview { margin-top: 15px; }
 
 /* 7. Server Assistant ------------------------------------------------------- */
@@ -1193,6 +1222,7 @@ select.field { cursor: pointer; }
     .bot-actions .btn { flex: 1 1 30%; }
     .tab-btn { white-space: nowrap; }
     .assistant-chat { height: 620px; }
+    .file-toolbar #file-search { flex-basis: 100%; max-width: none; }
 
     /* The sidebar becomes a drawer inside the chat frame, opened from the strip. */
     .assistant-sidebar,
@@ -1445,8 +1475,9 @@ select.field { cursor: pointer; }
 
             <!-- Files -->
             <div id="tab-files" hidden>
-                <div class="console-toolbar">
+                <div class="console-toolbar file-toolbar">
                     <span id="current-file-path" class="log-meta">Path: /home/runner/bot-server</span>
+                    <input id="file-search" class="field" type="search" placeholder="Search files and folders below" aria-label="Search files and folders below this directory" autocomplete="off">
                     <button class="btn" id="parent-dir-btn" type="button">⬆ Parent Directory</button>
                 </div>
                 <div class="console-body">
@@ -1624,7 +1655,7 @@ const state = {
     pendingBots: new Set(),   // bots with a start/stop/restart request in flight
     logs: { raw: '', paused: false, target: '', health: 'connecting' },   // health: connecting | live | error
     env: { data: {}, masked: true, notice: '' },
-    files: { path: '', parent: null },
+    files: { path: '', parent: null, query: '', searchTimer: null, searchRequestId: 0 },
     assistant: {
         messages: [],
         abort: null,
@@ -2397,6 +2428,7 @@ function queueRepositoryMetadata({ includeBranches = true, ref = null, delay = 5
             const data = await apiJson('/api/github/repository-metadata', jsonOptions('POST', {
                 repository,
                 pat,
+                bot_id: state.editBotId,
                 ref: selectedRef,
                 include_branches: includeBranches,
             }), 'Could not load GitHub repository');
@@ -2450,7 +2482,7 @@ async function prepareBotEdit(botKey) {
         $('bot-ref').value = bot.ref || '';
         $('bot-entrypoint').value = bot.entrypoint || '';
         $('bot-pat').value = '';
-        $('bot-pat').placeholder = 'Leave blank to keep the saved PAT';
+        $('bot-pat').placeholder = 'Saved PAT is reused if present; enter a new one to replace it';
         $('bot-environment').value = Object.entries(env || {}).map(([key, value]) => `${key}=${value}`).join('\n');
         $('bot-environment').placeholder = 'Leave blank to keep saved variables';
         $('add-bot-submit').textContent = 'Save changes';
@@ -2505,7 +2537,7 @@ async function manageBot(botKey, action) {
 async function updateBot(botKey) {
     const bot = state.bots[botKey];
     if (!bot || state.pendingBots.has(botKey)) return;
-    if (bot.running && !confirm(`Update ${bot.name || 'this bot'}? Its process will stop, and you will need to start it manually when the update succeeds.`)) return;
+    if (bot.running && !confirm(`Update ${bot.name || 'this bot'}? Its process will stop during the update and restart automatically when the update succeeds.`)) return;
 
     state.pendingBots.add(botKey);
     syncBotButtons(botKey);
@@ -2609,16 +2641,17 @@ function createInstallJobCard(job) {
             title: 'Dismiss notice',
             'aria-label': 'Dismiss install notice',
             onclick: () => dismissInstallJob(job.id),
-        }, '×'));
+            html: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4 4 12"/></svg>',
+        }));
     }
     const children = [
         h('div', { class: 'install-job-heading' },
             h('div', { class: 'section-title', style: 'font-size: .95rem;', 'data-job-field': 'title' }),
             h('div', { class: 'install-job-actions' },
                 h('div', { class: 'section-info', 'data-job-field': 'status' }), ...actions)),
-        h('div', { class: 'progress' }, h('div', { 'data-job-field': 'progress' })),
-        h('div', { class: 'log-meta', 'data-job-field': 'message' }),
     ];
+    if (!terminal) children.push(h('div', { class: 'progress' }, h('div', { 'data-job-field': 'progress' })));
+    children.push(h('div', { class: 'log-meta', 'data-job-field': 'message' }));
     return h('article', { class: 'panel install-job-card', 'data-status': job.status }, ...children);
 }
 
@@ -2627,7 +2660,8 @@ function updateInstallJobCard(node, job) {
     const operationLabel = job.operation === 'update' ? 'Update' : 'Install';
     node.querySelector('[data-job-field="title"]').textContent = `${operationLabel}: ${job.bot_name || job.definition?.name || 'Bot'}`;
     node.querySelector('[data-job-field="status"]').textContent = job.status.toUpperCase();
-    node.querySelector('[data-job-field="progress"]').style.width = `${Math.max(4, job.progress || 0)}%`;
+    const progress = node.querySelector('[data-job-field="progress"]');
+    if (progress) progress.style.width = `${Math.max(4, job.progress || 0)}%`;
     node.querySelector('[data-job-field="message"]').textContent = job.message || 'Processing...';
 }
 
@@ -2661,7 +2695,7 @@ function renderInstallJobs() {
         if (terminal && !wasTerminal) {
             state.installJobTimers.set(job.id, window.setTimeout(() => dismissInstallJob(job.id), 7000));
             if (failedDuringThisSession) prepareBotRetry(job.id, true);
-            else if (job.status === 'success' && job.operation === 'update') showToast(`${job.bot_name || 'Bot'} updated successfully. It is stopped and ready to start.`);
+            else if (job.status === 'success' && job.operation === 'update') showToast(`${job.bot_name || 'Bot'} updated and restarted successfully.`);
         }
     });
 
@@ -2842,7 +2876,52 @@ async function refreshEnv() {
 }
 
 /* Files */
+function renderFileEntries(entries, { searchResult = false, truncated = false } = {}) {
+    const children = entries.map(entry => {
+        const label = searchResult ? entry.relative_path || entry.name : entry.name;
+        return h('div', {
+            class: 'file-item',
+            onclick: event => {
+                if (event.target.closest('[data-file-delete]')) return;
+                if (entry.is_dir) loadFiles(entry.path);
+                else previewFile(entry.path);
+            },
+        },
+            h('div', { class: 'file-item-main' },
+                h('span', { class: 'file-icon', text: entry.is_dir ? '📁' : '📄' }),
+                h('span', { class: 'file-item-name', text: label, title: label })),
+            h('div', { class: 'file-item-end' },
+                h('span', { class: 'log-meta', text: entry.is_dir ? 'DIR' : formatBytes(entry.size_bytes) }),
+                h('button', {
+                    class: 'file-delete-btn',
+                    type: 'button',
+                    title: `Delete ${entry.name}`,
+                    'aria-label': `Delete ${entry.name}`,
+                    'data-file-delete': '',
+                    html: ICONS.trash,
+                    onclick: event => {
+                        event.stopPropagation();
+                        deleteFileEntry(entry);
+                    },
+                })));
+    });
+    if (!children.length) {
+        children.push(h('div', {
+            class: 'file-empty',
+            text: searchResult ? 'No matching files or folders.' : 'This folder is empty.',
+        }));
+    }
+    if (truncated) {
+        children.push(h('div', { class: 'file-empty', text: 'Showing the first 1000 matches. Refine your search.' }));
+    }
+    $('file-entries').replaceChildren(...children);
+}
+
 async function loadFiles(path = state.files.path) {
+    window.clearTimeout(state.files.searchTimer);
+    state.files.searchRequestId += 1;
+    state.files.query = '';
+    $('file-search').value = '';
     try {
         const data = await apiJson(`/api/files?path=${encodeURIComponent(path)}`, undefined, 'Unable to list files');
         if (data.is_file) return previewFile(data.path);
@@ -2851,12 +2930,57 @@ async function loadFiles(path = state.files.path) {
         $('current-file-path').textContent = `Path: ${data.current_path}`;
         $('parent-dir-btn').disabled = !data.parent_path;
         $('file-preview-box').hidden = true;
-        $('file-entries').replaceChildren(...data.entries.map(entry => h('div', {
-            class: 'file-item',
-            onclick: () => (entry.is_dir ? loadFiles(entry.path) : previewFile(entry.path)),
-        },
-            h('div', {}, h('span', { class: 'file-icon', text: entry.is_dir ? '📁' : '📄' }), entry.name),
-            h('span', { class: 'log-meta', text: entry.is_dir ? 'DIR' : formatBytes(entry.size_bytes) }))));
+        renderFileEntries(data.entries);
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+async function searchFileEntries(query, requestId) {
+    const rootPath = state.files.path;
+    try {
+        const data = await apiJson(
+            `/api/files/search?path=${encodeURIComponent(rootPath)}&q=${encodeURIComponent(query)}`,
+            undefined,
+            'Unable to search files',
+        );
+        if (requestId !== state.files.searchRequestId || (rootPath && rootPath !== state.files.path)) return;
+        if (!state.files.path) state.files.path = data.current_path;
+        $('file-preview-box').hidden = true;
+        renderFileEntries(data.entries, { searchResult: true, truncated: data.truncated });
+    } catch (error) {
+        if (requestId === state.files.searchRequestId) showToast(error.message, 'error');
+    }
+}
+
+function queueFileSearch() {
+    window.clearTimeout(state.files.searchTimer);
+    state.files.query = $('file-search').value.trim();
+    const requestId = ++state.files.searchRequestId;
+    if (!state.files.query) {
+        loadFiles(state.files.path);
+        return;
+    }
+    const query = state.files.query;
+    state.files.searchTimer = window.setTimeout(() => searchFileEntries(query, requestId), 220);
+}
+
+async function deleteFileEntry(entry) {
+    const contents = entry.is_dir ? ' and everything inside it' : '';
+    if (!confirm(`Delete ${entry.name}${contents}? This cannot be undone.`)) return;
+    try {
+        await apiJson('/api/files/delete', jsonOptions('POST', {
+            path: entry.path,
+            current_path: state.files.path,
+        }), 'Unable to delete item');
+        showToast(`Deleted ${entry.name}`);
+        $('file-preview-box').hidden = true;
+        if (state.files.query) {
+            const requestId = ++state.files.searchRequestId;
+            await searchFileEntries(state.files.query, requestId);
+        } else {
+            await loadFiles(state.files.path);
+        }
     } catch (error) {
         showToast(error.message, 'error');
     }
@@ -3606,9 +3730,15 @@ function bindEvents() {
         }
     });
     $('cancel-bot-retry').addEventListener('click', () => {
+        const wasEditingBot = state.editBotId !== null;
         resetBotRetryMode(true);
         $('install-status').textContent = 'No install running.';
-        $('bot-name').focus();
+        if (wasEditingBot) {
+            setAddBotPanelOpen(false);
+            $('toggle-add-bot').focus();
+        } else {
+            $('bot-name').focus();
+        }
     });
     $('bot-icon-form').addEventListener('submit', saveBotIcon);
     $('bot-icon-form').addEventListener('click', event => {
@@ -3658,6 +3788,7 @@ function bindEvents() {
     $('pause-logs').addEventListener('click', togglePauseLogs);
     $('toggle-env-mask').addEventListener('click', () => { state.env.masked = !state.env.masked; renderEnv(); });
     $('parent-dir-btn').addEventListener('click', () => { if (state.files.parent) loadFiles(state.files.parent); });
+    $('file-search').addEventListener('input', queueFileSearch);
 
     // Assistant: sidebar
     $('sidebar-toggle-btn').addEventListener('click', toggleSidebar);

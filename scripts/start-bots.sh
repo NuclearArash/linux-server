@@ -62,7 +62,17 @@ for definition in registry.get("bots", []):
     if not bot_id:
         continue
 
-    repo_dir = bots_dir / bot_id
+    directory_name = definition.get("directory_name") or bot_id
+    if (
+        not isinstance(directory_name, str)
+        or directory_name in {".", ".."}
+        or any(character in directory_name for character in '/\\\0')
+    ):
+        continue
+
+    repo_dir = bots_dir / directory_name
+    if repo_dir.is_symlink() or bots_dir.resolve() not in repo_dir.resolve().parents:
+        continue
     if not repo_dir.is_dir():
         continue
 
