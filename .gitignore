@@ -5,4 +5,5 @@
 *.pid
 .env
 __pycache__/
+.github/skills/
 linux-server.zip

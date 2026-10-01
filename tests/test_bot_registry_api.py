@@ -119,13 +119,21 @@ class BotRegistryApiTests(unittest.TestCase):
         with (
             patch.object(panel_app.psutil, "cpu_percent", return_value=0),
             patch.object(panel_app.psutil, "virtual_memory", return_value=SimpleNamespace(used=0, total=1, percent=0)),
-            patch.object(panel_app.psutil, "disk_usage", return_value=SimpleNamespace(percent=0)),
+            patch.object(panel_app.psutil, "disk_usage", return_value=SimpleNamespace(
+                percent=25,
+                used=2 * 1024**3,
+                total=8 * 1024**3,
+                free=6 * 1024**3,
+            )),
             patch.object(panel_app, "get_panel_url", return_value="unavailable"),
             patch.object(panel_app, "get_ssh_cmd", return_value="unavailable"),
         ):
             response = self.client.get("/api/status")
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["system"]["disk_used_gb"], 2)
+        self.assertEqual(response.json["system"]["disk_total_gb"], 8)
+        self.assertEqual(response.json["system"]["disk_free_gb"], 6)
         self.assertEqual(response.json["fleet"], {"online": 0, "total": 0})
         self.assertEqual(response.json["bots"], {})
 

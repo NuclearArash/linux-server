@@ -993,6 +993,9 @@ def status():
             "ram_total_gb": round(ram.total / (1024**3), 2),
             "ram_percent": ram.percent,
             "disk_percent": disk.percent,
+            "disk_used_gb": round(disk.used / (1024**3), 2),
+            "disk_total_gb": round(disk.total / (1024**3), 2),
+            "disk_free_gb": round(disk.free / (1024**3), 2),
             "uptime": format_uptime(time.time() - START_TIME),
             "panel_url": cf_url,
             "ssh_command": ssh_cmd
