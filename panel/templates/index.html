@@ -442,6 +442,8 @@ select.field { cursor: pointer; }
     font-size: 16px;
     filter: saturate(.85);
 }
+.bot-icon-button { padding: 0; color: inherit; cursor: pointer; }
+.bot-icon-button:hover { border-color: rgba(85, 199, 255, .45); background: rgba(85, 199, 255, .09); }
 .metric-value { color: #f4f7fb; font-family: var(--mono); font-size: 22px; font-weight: 700; letter-spacing: -.04em; line-height: 1; }
 .metric-value--small { font-size: 13px; }
 .metric-detail { margin-top: 5px; color: #5f6d81; font-family: var(--mono); font-size: 10px; }
@@ -577,8 +579,12 @@ select.field { cursor: pointer; }
 .bot-stat + .bot-stat { border-left: 1px solid var(--border); }
 .stat-label { color: #59677a; font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
 .stat-value { margin-top: 4px; color: #9ba8ba; font-family: var(--mono); font-size: 10px; }
-.bot-actions { display: flex; gap: 7px; }
+.bot-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .bot-actions .btn { min-height: 34px; }
+.bot-actions .btn-management { flex: 0 0 auto; justify-content: center; }
+.btn-delete-bot { --tone: 251, 113, 133; --tone-text: #fda4af; --tone-text-hover: #fecdd3; }
+.btn-delete-bot { border-color: rgba(var(--tone), .36); background: rgba(var(--tone), .10); color: var(--tone-text); }
+.btn-delete-bot:hover:not(:disabled) { border-color: rgba(var(--tone), .65); background: rgba(var(--tone), .18); color: var(--tone-text-hover); }
 
 /* 6. Console: tabs, logs, environment, files -------------------------------- */
 .console { border-radius: 17px; }
@@ -1105,6 +1111,59 @@ select.field { cursor: pointer; }
 }
 .toast.success { border-color: rgba(52, 211, 153, .4); }
 .toast.error { border-color: rgba(251, 113, 133, .4); }
+.bot-icon-dialog {
+    width: min(440px, calc(100vw - 32px));
+    padding: 20px;
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    background: #101722;
+    color: var(--text);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
+}
+.bot-icon-dialog::backdrop { background: rgba(2, 6, 12, .72); backdrop-filter: blur(3px); }
+.bot-icon-dialog h2 { margin: 0 0 16px; color: var(--text); font-size: 14px; }
+.bot-icon-picker {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 16px;
+}
+.bot-icon-choice {
+    min-width: 0;
+    min-height: 64px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 6px 3px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .025);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.bot-icon-choice:hover, .bot-icon-choice[aria-pressed="true"] {
+    border-color: rgba(85, 199, 255, .55);
+    background: rgba(85, 199, 255, .11);
+    color: var(--text);
+}
+.bot-icon-choice-emoji { font-size: 21px; line-height: 1; }
+.bot-icon-choice-label { font-size: 9px; line-height: 1.1; text-align: center; }
+.bot-icon-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.bot-delete-dialog {
+    width: min(420px, calc(100vw - 32px));
+    padding: 20px;
+    border: 1px solid rgba(255, 107, 129, .36);
+    border-radius: 12px;
+    background: #101722;
+    color: var(--text);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
+}
+.bot-delete-dialog::backdrop { background: rgba(2, 6, 12, .72); backdrop-filter: blur(3px); }
+.bot-delete-dialog h2 { margin: 0 0 10px; font-size: 14px; }
+.bot-delete-dialog p { margin: 0 0 16px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.bot-delete-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* 10. Responsive ------------------------------------------------------------ */
 @media (max-width: 1100px) {
@@ -1284,17 +1343,17 @@ select.field { cursor: pointer; }
         <div id="add-bot-panel" class="panel add-bot-panel" hidden>
             <div id="bot-add-error" class="bot-add-error" role="alert" aria-live="assertive" hidden></div>
             <div class="section-heading" style="margin-bottom: 16px;">
-                <div class="section-title" style="font-size: 1rem; letter-spacing: .12em;">Add a Bot</div>
+                <div id="bot-form-title" class="section-title" style="font-size: 1rem; letter-spacing: .12em;">Add a Bot</div>
                 <div class="section-info">GitHub repo + PAT + env</div>
             </div>
-            <form id="add-bot-form" class="add-bot-form">
+            <form id="add-bot-form" class="add-bot-form" autocomplete="off">
                 <label class="field-group">
                     <span class="field-label">Name</span>
-                    <input id="bot-name" class="field" type="text" name="name" placeholder="Example Bot" required>
+                    <input id="bot-name" class="field" type="text" name="name" placeholder="Example Bot" autocomplete="off" required>
                 </label>
                 <label class="field-group">
                     <span class="field-label">GitHub repo</span>
-                    <input id="bot-repository" class="field" type="url" name="repository" placeholder="https://github.com/org/repo.git" required>
+                    <input id="bot-repository" class="field" type="url" name="repository" placeholder="https://github.com/org/repo.git" autocomplete="off" required>
                 </label>
                 <label class="field-group">
                     <span class="field-label">PAT (optional)</span>
@@ -1472,6 +1531,37 @@ select.field { cursor: pointer; }
 </div>
 
 <div id="toast-container" class="toast-container"></div>
+<dialog id="bot-icon-dialog" class="bot-icon-dialog" aria-labelledby="bot-icon-title">
+    <form id="bot-icon-form">
+        <h2 id="bot-icon-title">Choose a bot category</h2>
+        <div class="bot-icon-picker" role="group" aria-label="Bot emoji categories">
+            <button class="bot-icon-choice" type="button" data-bot-icon-choice="🤖" aria-pressed="false" aria-label="General bot"><span class="bot-icon-choice-emoji">🤖</span><span class="bot-icon-choice-label">General</span></button>
+            <button class="bot-icon-choice" type="button" data-bot-icon-choice="💬" aria-pressed="false" aria-label="Chat bot"><span class="bot-icon-choice-emoji">💬</span><span class="bot-icon-choice-label">Chat</span></button>
+            <button class="bot-icon-choice" type="button" data-bot-icon-choice="📊" aria-pressed="false" aria-label="Analytics bot"><span class="bot-icon-choice-emoji">📊</span><span class="bot-icon-choice-label">Analytics</span></button>
+            <button class="bot-icon-choice" type="button" data-bot-icon-choice="🎮" aria-pressed="false" aria-label="Gaming bot"><span class="bot-icon-choice-emoji">🎮</span><span class="bot-icon-choice-label">Gaming</span></button>
+            <button class="bot-icon-choice" type="button" data-bot-icon-choice="🛒" aria-pressed="false" aria-label="Commerce bot"><span class="bot-icon-choice-emoji">🛒</span><span class="bot-icon-choice-label">Commerce</span></button>
+            <button class="bot-icon-choice" type="button" data-bot-icon-choice="📚" aria-pressed="false" aria-label="Education bot"><span class="bot-icon-choice-emoji">📚</span><span class="bot-icon-choice-label">Education</span></button>
+            <button class="bot-icon-choice" type="button" data-bot-icon-choice="🎨" aria-pressed="false" aria-label="Creative bot"><span class="bot-icon-choice-emoji">🎨</span><span class="bot-icon-choice-label">Creative</span></button>
+            <button class="bot-icon-choice" type="button" data-bot-icon-choice="🔔" aria-pressed="false" aria-label="Notifications bot"><span class="bot-icon-choice-emoji">🔔</span><span class="bot-icon-choice-label">Alerts</span></button>
+            <button class="bot-icon-choice" type="button" data-bot-icon-choice="🧰" aria-pressed="false" aria-label="Tools bot"><span class="bot-icon-choice-emoji">🧰</span><span class="bot-icon-choice-label">Tools</span></button>
+            <button class="bot-icon-choice" type="button" data-bot-icon-choice="🛰️" aria-pressed="false" aria-label="Integration bot"><span class="bot-icon-choice-emoji">🛰️</span><span class="bot-icon-choice-label">Integrations</span></button>
+        </div>
+        <div class="bot-icon-dialog-actions">
+            <button id="bot-icon-cancel" class="btn" type="button">Cancel</button>
+            <button id="bot-icon-save" class="btn btn-primary" type="submit" disabled>Save emoji</button>
+        </div>
+    </form>
+</dialog>
+<dialog id="bot-delete-dialog" class="bot-delete-dialog" aria-labelledby="bot-delete-title">
+    <form id="bot-delete-form">
+        <h2 id="bot-delete-title">Delete bot?</h2>
+        <p id="bot-delete-description"></p>
+        <div class="bot-delete-dialog-actions">
+            <button id="bot-delete-cancel" class="btn" type="button">Cancel</button>
+            <button id="bot-delete-confirm" class="btn btn-delete-bot" type="submit">Delete bot</button>
+        </div>
+    </form>
+</dialog>
 <script>
 (() => {
 'use strict';
@@ -1522,6 +1612,10 @@ const state = {
     installJobTimers: new Map(),
     dismissedInstallJobs: new Set(),
     retryJobId: null,
+    editBotId: null,
+    iconEditBotId: null,
+    iconEditValue: null,
+    deleteBotId: null,
     addBotPanelCloseTimer: null,
     repoMetadata: { timer: null, requestId: 0, repository: '' },
     comboOptions: new Map(),
@@ -2023,9 +2117,20 @@ function syncBotButtons(key) {
         const botKey = button.dataset.bot;
         if (key != null && botKey !== key) return;
         const running = !!state.bots[botKey]?.running;
-        const busy = state.pendingBots.has(botKey);
+        const updating = state.installJobs.some(job =>
+            job?.bot_id === botKey && job.operation === 'update' && ['queued', 'running'].includes(job.status)
+        );
+        const busy = state.pendingBots.has(botKey) || updating;
         const { action } = button.dataset;
         button.disabled = busy || (action === 'start' && running) || (action === 'restart' && !running) || (action === 'stop' && !running);
+    });
+    document.querySelectorAll('[data-bot-management]').forEach(button => {
+        const botKey = button.dataset.botManagement;
+        if (key != null && botKey !== key) return;
+        const activeJob = state.installJobs.some(job =>
+            job?.bot_id === botKey && ['queued', 'running'].includes(job.status)
+        );
+        button.disabled = state.pendingBots.has(botKey) || activeJob;
     });
 }
 
@@ -2055,7 +2160,7 @@ function renderBotCards() {
         grid.replaceChildren(...entries.map(([key, bot]) => h('article', { class: 'panel bot-card', 'data-bot-card': key },
             h('div', { class: 'bot-header' },
                 h('div', { class: 'bot-identity' },
-                    h('div', { class: 'bot-icon' }, bot.icon || '🤖'),
+                        h('button', { class: 'bot-icon bot-icon-button', type: 'button', 'data-bot-icon': key, title: 'Change bot emoji', 'aria-label': `Change ${bot.name || key} icon` }, bot.icon || '🤖'),
                     h('div', {},
                         h('div', { class: 'bot-name', text: bot.name || key }),
                         h('div', { class: 'bot-id', text: key }))),
@@ -2068,9 +2173,18 @@ function renderBotCards() {
             h('div', { class: 'bot-actions' },
                 h('button', { class: 'btn btn-start', type: 'button', 'data-bot': key, 'data-action': 'start', text: '▶️ Start' }),
                 h('button', { class: 'btn btn-restart', type: 'button', 'data-bot': key, 'data-action': 'restart', text: '🔄 Restart' }),
-                h('button', { class: 'btn btn-stop', type: 'button', 'data-bot': key, 'data-action': 'stop', text: '⏹️ Stop' })))));
+                h('button', { class: 'btn btn-stop', type: 'button', 'data-bot': key, 'data-action': 'stop', text: '⏹️ Stop' }),
+                h('button', { class: 'btn btn-management', type: 'button', 'data-bot-management': key, 'data-management-action': 'edit', text: '✎ Edit' }),
+                h('button', { class: 'btn btn-restart btn-management', type: 'button', 'data-bot-management': key, 'data-management-action': 'update', text: '↻ Update' }),
+                h('button', { class: 'btn btn-delete-bot btn-management', type: 'button', 'data-bot-management': key, 'data-management-action': 'delete', text: '⌫ Delete' })))));
         grid.querySelectorAll('[data-bot][data-action]').forEach(button => {
             button.onclick = () => controlBot(button.dataset.bot, button.dataset.action);
+        });
+        grid.querySelectorAll('[data-bot-icon]').forEach(button => {
+            button.onclick = () => changeBotIcon(button.dataset.botIcon);
+        });
+        grid.querySelectorAll('[data-bot-management]').forEach(button => {
+            button.onclick = () => manageBot(button.dataset.botManagement, button.dataset.managementAction);
         });
     }
 
@@ -2082,6 +2196,9 @@ function renderBotCards() {
         const status = card.querySelector('[data-bot-status]');
         status.className = `status ${running ? 'running' : 'stopped'}`;
         status.querySelector('[data-bot-field="status"]').textContent = running ? 'RUNNING' : 'STOPPED';
+        const iconButton = card.querySelector('[data-bot-icon]');
+        iconButton.textContent = bot.icon || '🤖';
+        iconButton.setAttribute('aria-label', `Change ${bot.name || key} icon`);
         card.querySelector('[data-bot-field="pid"]').textContent = bot.pid || '—';
         card.querySelector('[data-bot-field="uptime"]').textContent = bot.uptime || '—';
         card.querySelector('[data-bot-field="restarts"]').textContent = bot.restarts ?? 0;
@@ -2303,8 +2420,11 @@ function queueRepositoryMetadata({ includeBranches = true, ref = null, delay = 5
 
 function resetBotRetryMode(clearForm = false) {
     state.retryJobId = null;
+    state.editBotId = null;
     $('add-bot-submit').textContent = '🚀 Add bot';
     $('cancel-bot-retry').hidden = true;
+    $('cancel-bot-retry').textContent = 'Cancel';
+    $('bot-form-title').textContent = 'Add a Bot';
     $('bot-pat').placeholder = 'GitHub PAT for private repos';
     $('bot-environment').placeholder = 'BOT_TOKEN=value1 OTHER_VAR=value2';
     if (clearForm) {
@@ -2314,6 +2434,124 @@ function resetBotRetryMode(clearForm = false) {
         setDatalistOptions('bot-entrypoint-options', []);
         setRepositoryMetadataStatus('');
         clearBotAddError();
+    }
+}
+
+async function prepareBotEdit(botKey) {
+    try {
+        const [{ bot }, { env }] = await Promise.all([
+            apiJson(`/api/bots/${encodeURIComponent(botKey)}`, { cache: 'no-store' }, 'Could not load bot settings'),
+            apiJson(`/api/env/${encodeURIComponent(botKey)}`, { cache: 'no-store' }, 'Could not load bot environment'),
+        ]);
+        state.retryJobId = null;
+        state.editBotId = botKey;
+        $('bot-name').value = bot.name || '';
+        $('bot-repository').value = bot.repository || '';
+        $('bot-ref').value = bot.ref || '';
+        $('bot-entrypoint').value = bot.entrypoint || '';
+        $('bot-pat').value = '';
+        $('bot-pat').placeholder = 'Leave blank to keep the saved PAT';
+        $('bot-environment').value = Object.entries(env || {}).map(([key, value]) => `${key}=${value}`).join('\n');
+        $('bot-environment').placeholder = 'Leave blank to keep saved variables';
+        $('add-bot-submit').textContent = 'Save changes';
+        $('cancel-bot-retry').textContent = 'Cancel edit';
+        $('cancel-bot-retry').hidden = false;
+        $('bot-form-title').textContent = `Edit ${bot.name || 'Bot'}`;
+        clearBotAddError();
+        state.repoMetadata.repository = bot.repository || '';
+        queueRepositoryMetadata({ includeBranches: true, ref: bot.ref, delay: 0 });
+        $('install-status').textContent = 'Blank PAT keeps the saved credential.';
+        setAddBotPanelOpen(true);
+        requestAnimationFrame(() => $('bot-name').focus());
+    } catch (error) {
+        showToast(`Could not edit bot: ${error.message}`, 'error');
+    }
+}
+
+function changeBotIcon(botKey) {
+    state.iconEditBotId = botKey;
+    state.iconEditValue = state.bots[botKey]?.icon || '🤖';
+    document.querySelectorAll('[data-bot-icon-choice]').forEach(button => {
+        button.setAttribute('aria-pressed', String(button.dataset.botIconChoice === state.iconEditValue));
+    });
+    $('bot-icon-save').disabled = !state.iconEditValue;
+    $('bot-icon-dialog').showModal();
+    document.querySelector('[data-bot-icon-choice][aria-pressed="true"]')?.focus();
+}
+
+async function saveBotIcon(event) {
+    event.preventDefault();
+    const botKey = state.iconEditBotId;
+    const icon = state.iconEditValue;
+    if (!botKey || !icon) return;
+    try {
+        await apiJson(`/api/bots/${encodeURIComponent(botKey)}`, jsonOptions('PUT', { icon }), 'Could not update bot icon');
+        $('bot-icon-dialog').close();
+        state.iconEditBotId = null;
+        state.iconEditValue = null;
+        await refreshStatus();
+        showToast('Bot icon updated');
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+async function manageBot(botKey, action) {
+    if (action === 'edit') return prepareBotEdit(botKey);
+    if (action === 'update') return updateBot(botKey);
+    if (action === 'delete') return deleteBot(botKey);
+}
+
+async function updateBot(botKey) {
+    const bot = state.bots[botKey];
+    if (!bot || state.pendingBots.has(botKey)) return;
+    if (bot.running && !confirm(`Update ${bot.name || 'this bot'}? Its process will stop, and you will need to start it manually when the update succeeds.`)) return;
+
+    state.pendingBots.add(botKey);
+    syncBotButtons(botKey);
+    try {
+        const data = await apiJson(`/api/bots/${encodeURIComponent(botKey)}/update`, { method: 'POST' }, 'Could not update bot');
+        showToast(`Update queued: ${data.job?.bot_name || bot.name}`);
+        await refreshInstallJobs();
+        await refreshStatus();
+    } catch (error) {
+        showToast(error.message, 'error');
+    } finally {
+        state.pendingBots.delete(botKey);
+        syncBotButtons(botKey);
+    }
+}
+
+async function deleteBot(botKey) {
+    const bot = state.bots[botKey];
+    if (!bot || state.pendingBots.has(botKey)) return;
+    state.deleteBotId = botKey;
+    $('bot-delete-title').textContent = `Delete ${bot.name || 'bot'}?`;
+    $('bot-delete-description').textContent = 'This permanently removes the bot files and saved credentials from this runner. Shared cache snapshots are preserved because they contain other bots too; the cleaned fleet is saved when this workflow completes.';
+    $('bot-delete-dialog').showModal();
+}
+
+async function confirmDeleteBot(event) {
+    event.preventDefault();
+    const botKey = state.deleteBotId;
+    const bot = state.bots[botKey];
+    if (!bot || state.pendingBots.has(botKey)) return;
+    state.pendingBots.add(botKey);
+    syncBotButtons(botKey);
+    $('bot-delete-confirm').disabled = true;
+    try {
+        const data = await apiJson(`/api/bots/${encodeURIComponent(botKey)}`, { method: 'DELETE' }, 'Could not delete bot');
+        $('bot-delete-dialog').close();
+        state.deleteBotId = null;
+        showToast(data.message || `${bot.name || 'Bot'} deleted`);
+        await refreshStatus();
+        await refreshInstallJobs();
+    } catch (error) {
+        showToast(error.message, 'error');
+    } finally {
+        $('bot-delete-confirm').disabled = false;
+        state.pendingBots.delete(botKey);
+        syncBotButtons(botKey);
     }
 }
 
@@ -2386,7 +2624,8 @@ function createInstallJobCard(job) {
 
 function updateInstallJobCard(node, job) {
     node.dataset.status = job.status;
-    node.querySelector('[data-job-field="title"]').textContent = `Install: ${job.bot_name || job.definition?.name || 'Bot'}`;
+    const operationLabel = job.operation === 'update' ? 'Update' : 'Install';
+    node.querySelector('[data-job-field="title"]').textContent = `${operationLabel}: ${job.bot_name || job.definition?.name || 'Bot'}`;
     node.querySelector('[data-job-field="status"]').textContent = job.status.toUpperCase();
     node.querySelector('[data-job-field="progress"]').style.width = `${Math.max(4, job.progress || 0)}%`;
     node.querySelector('[data-job-field="message"]').textContent = job.message || 'Processing...';
@@ -2422,10 +2661,12 @@ function renderInstallJobs() {
         if (terminal && !wasTerminal) {
             state.installJobTimers.set(job.id, window.setTimeout(() => dismissInstallJob(job.id), 7000));
             if (failedDuringThisSession) prepareBotRetry(job.id, true);
+            else if (job.status === 'success' && job.operation === 'update') showToast(`${job.bot_name || 'Bot'} updated successfully. It is stopped and ready to start.`);
         }
     });
 
     list.style.display = list.children.length ? 'grid' : 'none';
+    syncBotButtons();
 }
 
 async function refreshInstallJobs() {
@@ -3324,13 +3565,22 @@ async function addBot(event) {
     const pat = $('bot-pat').value.trim();
     const environment = $('bot-environment').value.trim();
     const retryJobId = state.retryJobId;
+    const editBotId = state.editBotId;
 
     try {
-        const endpoint = retryJobId ? `/api/bots/jobs/${encodeURIComponent(retryJobId)}/retry` : '/api/bots';
-        const data = await apiJson(endpoint, jsonOptions('POST', { name, repository, ref, entrypoint, pat, environment }), 'Could not add bot');
-        showToast(`${retryJobId ? 'Retry queued' : 'Bot queued'}: ${data.bot?.name || data.job?.bot_name || name}`);
+        const endpoint = retryJobId
+            ? `/api/bots/jobs/${encodeURIComponent(retryJobId)}/retry`
+            : editBotId ? `/api/bots/${encodeURIComponent(editBotId)}` : '/api/bots';
+        const method = editBotId && !retryJobId ? 'PUT' : 'POST';
+        const data = await apiJson(endpoint, jsonOptions(method, { name, repository, ref, entrypoint, pat, environment }), 'Could not save bot');
+        if (editBotId && !retryJobId) {
+            showToast(data.message || `${data.bot?.name || name} updated`);
+            $('install-status').textContent = `${data.bot?.name || name} saved and stopped.`;
+        } else {
+            showToast(`${retryJobId ? 'Retry queued' : 'Bot queued'}: ${data.bot?.name || data.job?.bot_name || name}`);
+            $('install-status').textContent = `Queued: ${data.job?.status || 'pending'}`;
+        }
         resetBotRetryMode(true);
-        $('install-status').textContent = `Queued: ${data.job?.status || 'pending'}`;
         setAddBotPanelOpen(false);
         await refreshInstallJobs();
         await refreshStatus();
@@ -3359,6 +3609,26 @@ function bindEvents() {
         resetBotRetryMode(true);
         $('install-status').textContent = 'No install running.';
         $('bot-name').focus();
+    });
+    $('bot-icon-form').addEventListener('submit', saveBotIcon);
+    $('bot-icon-form').addEventListener('click', event => {
+        const choice = event.target.closest('[data-bot-icon-choice]');
+        if (!choice) return;
+        state.iconEditValue = choice.dataset.botIconChoice;
+        document.querySelectorAll('[data-bot-icon-choice]').forEach(button => {
+            button.setAttribute('aria-pressed', String(button === choice));
+        });
+        $('bot-icon-save').disabled = false;
+    });
+    $('bot-icon-cancel').addEventListener('click', () => {
+        $('bot-icon-dialog').close();
+        state.iconEditBotId = null;
+        state.iconEditValue = null;
+    });
+    $('bot-delete-form').addEventListener('submit', confirmDeleteBot);
+    $('bot-delete-cancel').addEventListener('click', () => {
+        $('bot-delete-dialog').close();
+        state.deleteBotId = null;
     });
     $('bot-repository').addEventListener('input', () => queueRepositoryMetadata({ includeBranches: true }));
     $('bot-repository').addEventListener('change', () => queueRepositoryMetadata({ includeBranches: true, delay: 0 }));

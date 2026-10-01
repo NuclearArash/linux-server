@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 REGISTRY_VERSION = 1
 BOT_FIELDS = {"id", "name", "repository", "ref", "entrypoint", "enabled"}
+BOT_OPTIONAL_FIELDS = {"icon"}
 BOT_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 GITHUB_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -18,7 +19,11 @@ def empty_registry():
 
 
 def validate_bot_definition(definition):
-    if not isinstance(definition, dict) or set(definition) != BOT_FIELDS:
+    if (
+        not isinstance(definition, dict)
+        or not BOT_FIELDS.issubset(definition)
+        or set(definition) - BOT_FIELDS - BOT_OPTIONAL_FIELDS
+    ):
         raise ValueError("Bot definition has an invalid shape")
 
     bot_id = definition["id"]
@@ -81,6 +86,11 @@ def validate_bot_definition(definition):
 
     if not isinstance(definition["enabled"], bool):
         raise ValueError("Bot enabled state must be a boolean")
+
+    if "icon" in definition:
+        icon = definition["icon"]
+        if not isinstance(icon, str) or len(icon) > 16 or any(ord(character) < 32 for character in icon):
+            raise ValueError("Bot icon must be an emoji string of at most 16 characters")
 
 
 def validate_registry(registry):

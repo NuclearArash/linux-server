@@ -110,6 +110,7 @@ BOT_REGISTRY_LOCK = Lock()
 BOT_INSTALL_JOBS = {}
 BOT_INSTALL_JOBS_LOCK = Lock()
 BOT_INSTALL_PAYLOADS = {}
+PIP_NETWORK_OPTIONS = ("--timeout", "120", "--retries", "5")
 
 
 def generate_bot_id():
@@ -148,6 +149,22 @@ def parse_environment_assignments(raw_environment):
         if not isinstance(value, str) or "\n" in value or "\r" in value:
             raise ValueError(f"Environment variable value is invalid for {key!r}")
     return environment
+
+
+def format_bot_install_error(error):
+    message = str(error).strip() or "Bot installation failed."
+    if re.search(r"ReadTimeoutError|Read timed out|The read operation timed out", message, re.IGNORECASE):
+        return "Dependency download timed out after retries. Check the network connection and retry the installation."
+    if "Traceback" in message or len(message) > 400:
+        error_lines = [
+            line.strip()
+            for line in message.splitlines()
+            if line.strip().startswith("ERROR:") and "Traceback" not in line
+        ]
+        if error_lines:
+            return error_lines[-1][:320]
+        return "Installation failed with lengthy output. Check the dependency settings and retry."
+    return message
 
 
 class GitHubApiError(Exception):
@@ -260,7 +277,7 @@ def _record_bot_job(job_id, status, progress, message, **extra):
         return job
 
 
-def _queue_bot_install(definition, pat, environment, job_id=None):
+def _queue_bot_install(definition, pat, environment, job_id=None, operation="install", worker=None):
     job_id = job_id or secrets.token_hex(8)
     safe_definition = dict(definition)
     with BOT_INSTALL_JOBS_LOCK:
@@ -278,11 +295,13 @@ def _queue_bot_install(definition, pat, environment, job_id=None):
         0,
         "Queued for installation...",
         step="queued",
+        operation=operation,
         bot_id=safe_definition["id"],
         bot_name=safe_definition["name"],
         definition=safe_definition,
     )
-    thread = threading.Thread(target=_run_bot_install, args=(job_id, safe_definition, pat, environment), daemon=True)
+    worker = worker or _run_bot_install
+    thread = threading.Thread(target=worker, args=(job_id, safe_definition, pat, environment), daemon=True)
     thread.start()
     with BOT_INSTALL_JOBS_LOCK:
         return dict(BOT_INSTALL_JOBS[job_id])
@@ -302,8 +321,8 @@ def _run_install_command(command, cwd=None):
     return completed
 
 
-def _clone_bot_repository(job_id, definition, pat):
-    repo_dir = os.path.join(BASE_DIR, "bots", definition["id"])
+def _clone_bot_repository(job_id, definition, pat, repo_dir=None):
+    repo_dir = repo_dir or os.path.join(BASE_DIR, "bots", definition["id"])
     os.makedirs(os.path.dirname(repo_dir), exist_ok=True)
     if os.path.exists(repo_dir):
         shutil.rmtree(repo_dir)
@@ -322,8 +341,8 @@ def _clone_bot_repository(job_id, definition, pat):
         raise RuntimeError("Repository clone did not produce a working directory")
 
 
-def _install_bot_dependencies(job_id, definition):
-    repo_dir = os.path.join(BASE_DIR, "bots", definition["id"])
+def _install_bot_dependencies(job_id, definition, repo_dir=None):
+    repo_dir = repo_dir or os.path.join(BASE_DIR, "bots", definition["id"])
     venv_dir = os.path.join(repo_dir, ".venv")
     py_executable = os.path.join(venv_dir, "Scripts", "python.exe") if os.name == "nt" else os.path.join(venv_dir, "bin", "python")
     if not os.path.exists(py_executable):
@@ -336,10 +355,10 @@ def _install_bot_dependencies(job_id, definition):
 
     if os.path.exists(requirements_path):
         _record_bot_job(job_id, "running", 60, "Installing Python dependencies...", step="deps")
-        _run_install_command([py_executable, "-m", "pip", "install", "--disable-pip-version-check", "-r", requirements_path])
+        _run_install_command([py_executable, "-m", "pip", "install", "--disable-pip-version-check", *PIP_NETWORK_OPTIONS, "-r", requirements_path])
     elif os.path.exists(pyproject_path) or os.path.exists(setup_py_path):
         _record_bot_job(job_id, "running", 60, "Installing package in editable mode...", step="deps")
-        _run_install_command([py_executable, "-m", "pip", "install", "--disable-pip-version-check", "-e", repo_dir])
+        _run_install_command([py_executable, "-m", "pip", "install", "--disable-pip-version-check", *PIP_NETWORK_OPTIONS, "-e", repo_dir])
 
 
 def _validate_repo_entrypoint(repo_dir, entrypoint):
@@ -353,6 +372,82 @@ def _validate_repo_entrypoint(repo_dir, entrypoint):
     if not is_within_repo or not os.path.isfile(resolved_path):
         raise FileNotFoundError("Bot entrypoint is missing or outside the repository")
     return resolved_path
+
+
+def _run_bot_update(job_id, definition, pat, environment):
+    if job_id not in BOT_INSTALL_JOBS:
+        return
+
+    bots_root = os.path.realpath(os.path.join(BASE_DIR, "bots"))
+    bot_id = definition["id"]
+    target_dir = os.path.join(bots_root, bot_id)
+    if os.path.commonpath([bots_root, os.path.realpath(target_dir)]) != bots_root or os.path.islink(target_dir):
+        _record_bot_job(job_id, "failed", 100, "Bot directory failed its safety check.", step="error", error="Bot directory failed its safety check.")
+        return
+
+    os.makedirs(bots_root, exist_ok=True)
+    update_suffix = secrets.token_hex(8)
+    staging_dir = os.path.join(bots_root, f".{bot_id}.update-{update_suffix}")
+    backup_dir = os.path.join(bots_root, f".{bot_id}.backup-{update_suffix}")
+    backup_created = False
+    try:
+        _record_bot_job(job_id, "running", 10, "Preparing fresh repository checkout...", step="clone")
+        _clone_bot_repository(job_id, definition, pat, repo_dir=staging_dir)
+        _install_bot_dependencies(job_id, definition, repo_dir=staging_dir)
+        _validate_repo_entrypoint(staging_dir, definition["entrypoint"])
+
+        with BOT_REGISTRY_LOCK:
+            registry = get_bot_registry()
+            current = get_bot_definition(bot_id, registry)
+            if current is None:
+                raise ValueError("Bot was removed while its update was running")
+            tracked_fields = ("name", "repository", "ref", "entrypoint")
+            if any(current.get(field) != definition.get(field) for field in tracked_fields):
+                raise ValueError("Bot settings changed while its update was running; run Update again")
+
+        if os.path.lexists(target_dir):
+            if os.path.islink(target_dir) or not os.path.isdir(target_dir):
+                raise ValueError("Existing bot directory failed its safety check")
+            os.replace(target_dir, backup_dir)
+            backup_created = True
+        try:
+            os.replace(staging_dir, target_dir)
+        except Exception:
+            if backup_created and not os.path.lexists(target_dir):
+                os.replace(backup_dir, target_dir)
+                backup_created = False
+            raise
+
+        if backup_created:
+            shutil.rmtree(backup_dir, ignore_errors=True)
+            backup_created = False
+        _record_bot_job(
+            job_id,
+            "success",
+            100,
+            "Bot updated successfully. It remains stopped; start it when ready.",
+            step="complete",
+            bot_id=bot_id,
+            bot_name=definition["name"],
+            definition=dict(definition),
+        )
+        with BOT_INSTALL_JOBS_LOCK:
+            BOT_INSTALL_PAYLOADS.pop(job_id, None)
+    except Exception as error:
+        if backup_created and not os.path.lexists(target_dir):
+            try:
+                os.replace(backup_dir, target_dir)
+                backup_created = False
+            except OSError:
+                pass
+        message = format_bot_install_error(error)
+        if pat:
+            for secret in {pat, urllib.parse.quote(pat, safe="")}:
+                message = message.replace(secret, "[REDACTED]")
+        _record_bot_job(job_id, "failed", 100, message, step="error", error=message)
+    finally:
+        if os.path.lexists(staging_dir):
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 def _run_bot_install(job_id, definition, pat, environment):
@@ -381,7 +476,7 @@ def _run_bot_install(job_id, definition, pat, environment):
         with BOT_INSTALL_JOBS_LOCK:
             BOT_INSTALL_PAYLOADS.pop(job_id, None)
     except Exception as error:
-        message = str(error) or "Bot installation failed."
+        message = format_bot_install_error(error)
         if pat:
             for secret in {pat, urllib.parse.quote(pat, safe="")}:
                 message = message.replace(secret, "[REDACTED]")
@@ -560,6 +655,35 @@ def get_bot_proc(bot_key):
         except Exception:
             pass
     return None
+
+
+def stop_bot_process(bot_key, definition=None):
+    definition = definition or get_bot_definition(bot_key)
+    if definition is None:
+        return False
+    info = get_bot_info(definition)
+    proc = get_bot_proc(bot_key)
+    if proc:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except psutil.NoSuchProcess:
+            pass
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except psutil.NoSuchProcess:
+                pass
+            except Exception:
+                return False
+    try:
+        os.remove(info["pid_path"])
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    return True
 
 
 def get_bot_statuses(registry=None):
@@ -1221,6 +1345,227 @@ def bot_registry_collection():
     return jsonify({"success": True, "bot": definition, "job": job}), 202
 
 
+@app.route("/api/bots/<bot_key>", methods=["GET", "PUT", "DELETE"])
+@login_required
+def edit_bot(bot_key):
+    if request.method == "GET":
+        definition = get_bot_definition(bot_key)
+        if definition is None:
+            return jsonify({"error": "Unknown bot"}), 404
+        return jsonify({"bot": definition})
+    if request.method == "DELETE":
+        return delete_bot(bot_key)
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Bot edit payload must be a JSON object"}), 400
+    editable_fields = {"name", "repository", "ref", "entrypoint", "icon", "pat", "environment"}
+    if set(payload) - editable_fields:
+        return jsonify({"error": "Bot edit payload contains unsupported fields"}), 400
+
+    for field in ("name", "repository", "ref", "entrypoint"):
+        if field in payload and not isinstance(payload[field], str):
+            return jsonify({"error": f"{field.capitalize()} must be a string"}), 400
+    pat = payload.get("pat", "")
+    if not isinstance(pat, str):
+        return jsonify({"error": "PAT must be a string"}), 400
+
+    environment = None
+    if "environment" in payload:
+        try:
+            environment = parse_environment_assignments(payload["environment"])
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+
+    with BOT_REGISTRY_LOCK:
+        registry = get_bot_registry()
+        bot_index = next((index for index, bot in enumerate(registry["bots"]) if bot["id"] == bot_key), None)
+        if bot_index is None:
+            return jsonify({"error": "Unknown bot"}), 404
+
+        current = registry["bots"][bot_index]
+        if set(payload) == {"icon"}:
+            icon = payload["icon"]
+            if not isinstance(icon, str):
+                return jsonify({"error": "Icon must be a string"}), 400
+            definition = dict(current)
+            if icon.strip():
+                definition["icon"] = icon.strip()
+            else:
+                definition.pop("icon", None)
+            try:
+                validate_bot_definition(definition)
+                registry["bots"][bot_index] = definition
+                save_registry(BOT_REGISTRY_PATH, registry)
+            except (OSError, ValueError) as error:
+                return jsonify({"error": str(error)}), 400
+            return jsonify({"success": True, "bot": definition, "message": "Bot icon updated"})
+
+        definition = dict(current)
+        for field in ("name", "repository", "ref", "entrypoint"):
+            if field in payload:
+                definition[field] = payload[field].strip()
+        if "icon" in payload:
+            icon = payload["icon"]
+            if not isinstance(icon, str):
+                return jsonify({"error": "Icon must be a string"}), 400
+            if icon.strip():
+                definition["icon"] = icon.strip()
+            else:
+                definition.pop("icon", None)
+        definition["enabled"] = False
+
+        try:
+            validate_bot_definition(definition)
+            current_credentials = get_bot_credentials(registry, bot_key, BOT_CREDENTIALS_KEY)
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+
+        if not stop_bot_process(bot_key, current):
+            return jsonify({"error": "Bot could not be stopped; no changes were saved"}), 503
+
+        registry["bots"][bot_index] = definition
+        credentials = {
+            "pat": pat.strip() or current_credentials["pat"],
+            "environment": environment if environment is not None else current_credentials["environment"],
+        }
+        try:
+            set_bot_credentials(registry, bot_key, credentials, BOT_CREDENTIALS_KEY)
+            save_registry(BOT_REGISTRY_PATH, registry)
+        except (OSError, ValueError) as error:
+            return jsonify({"error": f"Bot edits could not be saved: {error}"}), 503
+
+    return jsonify({
+        "success": True,
+        "bot": definition,
+        "message": f"{definition['name']} saved and stopped. Use Update to sync repository changes.",
+    })
+
+
+def delete_bot(bot_key):
+    with BOT_REGISTRY_LOCK:
+        registry = get_bot_registry()
+        definition = get_bot_definition(bot_key, registry)
+        if definition is None:
+            return jsonify({"error": "Unknown bot"}), 404
+        with BOT_INSTALL_JOBS_LOCK:
+            if any(
+                job.get("bot_id") == bot_key and job.get("status") in {"queued", "running"}
+                for job in BOT_INSTALL_JOBS.values()
+            ):
+                return jsonify({"error": "An install or update is running for this bot"}), 409
+
+        bots_root = os.path.realpath(os.path.join(BASE_DIR, "bots"))
+        bot_dir = os.path.join(bots_root, bot_key)
+        resolved_bot_dir = os.path.realpath(bot_dir)
+        try:
+            is_contained = os.path.commonpath([bots_root, resolved_bot_dir]) == bots_root
+        except ValueError:
+            is_contained = False
+        if not is_contained or resolved_bot_dir == bots_root or os.path.islink(bot_dir):
+            return jsonify({"error": "Bot directory failed its safety check"}), 409
+
+        if not stop_bot_process(bot_key, definition):
+            return jsonify({"error": "Bot could not be stopped; nothing was deleted"}), 503
+
+        delete_suffix = secrets.token_hex(8)
+        quarantine_dir = os.path.join(bots_root, f".{bot_key}.delete-{delete_suffix}")
+        directory_quarantined = False
+        if os.path.lexists(bot_dir):
+            try:
+                os.replace(bot_dir, quarantine_dir)
+                directory_quarantined = True
+            except OSError:
+                return jsonify({"error": "Bot files could not be safely quarantined"}), 503
+
+        original_credentials = registry["encrypted_credentials"].pop(bot_key, None)
+        original_bots = list(registry["bots"])
+        registry["bots"] = [bot for bot in registry["bots"] if bot["id"] != bot_key]
+        try:
+            save_registry(BOT_REGISTRY_PATH, registry)
+        except (OSError, ValueError):
+            registry["bots"] = original_bots
+            if original_credentials is not None:
+                registry["encrypted_credentials"][bot_key] = original_credentials
+            if directory_quarantined:
+                try:
+                    os.replace(quarantine_dir, bot_dir)
+                except OSError:
+                    app.logger.exception("Could not restore bot directory after registry save failure")
+            return jsonify({"error": "Bot deletion could not be saved; local files were restored where possible"}), 503
+
+        try:
+            if directory_quarantined:
+                shutil.rmtree(quarantine_dir)
+        except OSError:
+            registry["bots"] = original_bots
+            if original_credentials is not None:
+                registry["encrypted_credentials"][bot_key] = original_credentials
+            try:
+                save_registry(BOT_REGISTRY_PATH, registry)
+                if directory_quarantined and not os.path.lexists(bot_dir):
+                    os.replace(quarantine_dir, bot_dir)
+            except OSError:
+                app.logger.exception("Could not roll back bot deletion after directory cleanup failure")
+            return jsonify({"error": "Bot files could not be fully removed; deletion was rolled back where possible"}), 503
+
+        BOT_RESTART_COUNTS.pop(bot_key, None)
+        info = get_bot_info(definition)
+        try:
+            os.remove(info["log_path"])
+        except FileNotFoundError:
+            pass
+        except OSError:
+            app.logger.warning("Could not remove bot log for %s", bot_key)
+        with BOT_INSTALL_JOBS_LOCK:
+            removed_jobs = [job_id for job_id, job in BOT_INSTALL_JOBS.items() if job.get("bot_id") == bot_key]
+            for job_id in removed_jobs:
+                BOT_INSTALL_JOBS.pop(job_id, None)
+                BOT_INSTALL_PAYLOADS.pop(job_id, None)
+
+    return jsonify({
+        "success": True,
+        "message": f"{definition['name']} deleted from this runner. Shared cache snapshots were preserved; the cleaned fleet is saved when this workflow completes.",
+        "deleted_cache_snapshots": 0,
+    })
+
+
+@app.route("/api/bots/<bot_key>/update", methods=["POST"])
+@login_required
+def update_bot(bot_key):
+    with BOT_REGISTRY_LOCK:
+        registry = get_bot_registry()
+        definition = get_bot_definition(bot_key, registry)
+        if definition is None:
+            return jsonify({"error": "Unknown bot"}), 404
+        with BOT_INSTALL_JOBS_LOCK:
+            if any(job.get("bot_id") == bot_key and job.get("status") in {"queued", "running"} for job in BOT_INSTALL_JOBS.values()):
+                return jsonify({"error": "A bot install or update is already running"}), 409
+        try:
+            credentials = get_bot_credentials(registry, bot_key, BOT_CREDENTIALS_KEY)
+        except ValueError:
+            return jsonify({"error": "Bot credentials are unavailable"}), 503
+        if not stop_bot_process(bot_key, definition):
+            return jsonify({"error": "Bot could not be stopped; update was not started"}), 503
+
+        definition = dict(definition)
+        definition["enabled"] = False
+        index = next(index for index, bot in enumerate(registry["bots"]) if bot["id"] == bot_key)
+        registry["bots"][index] = definition
+        try:
+            save_registry(BOT_REGISTRY_PATH, registry)
+        except (OSError, ValueError):
+            return jsonify({"error": "Bot was stopped, but its state could not be saved"}), 503
+        job = _queue_bot_install(
+            definition,
+            credentials["pat"],
+            credentials["environment"],
+            operation="update",
+            worker=_run_bot_update,
+        )
+    return jsonify({"success": True, "job": job}), 202
+
+
 @app.route("/api/bots/jobs")
 @login_required
 def bot_install_jobs():
@@ -1249,6 +1594,7 @@ def retry_bot_install_job(job_id):
             return jsonify({"error": "Unknown install job"}), 404
         if job.get("status") != "failed":
             return jsonify({"error": "Only failed installs can be retried"}), 409
+        operation = job.get("operation", "install")
         saved_input = {
             "definition": dict(saved_input["definition"]),
             "pat": saved_input["pat"],
@@ -1281,7 +1627,8 @@ def retry_bot_install_job(job_id):
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
 
-    job = _queue_bot_install(definition, pat, environment, job_id=job_id)
+    worker = _run_bot_update if operation == "update" else _run_bot_install
+    job = _queue_bot_install(definition, pat, environment, job_id=job_id, operation=operation, worker=worker)
     return jsonify({"success": True, "job": job}), 202
 
 
@@ -1298,21 +1645,8 @@ def control_bot(bot_key, action):
     proc = get_bot_proc(bot_key)
 
     if action in {"stop", "restart"}:
-        if proc:
-            try:
-                proc.terminate()
-                proc.wait(timeout=5)
-            except Exception:
-                try:
-                    proc.kill()
-                    proc.wait(timeout=5)
-                except Exception:
-                    pass
-        if os.path.exists(info["pid_path"]):
-            try:
-                os.remove(info["pid_path"])
-            except Exception:
-                pass
+        if not stop_bot_process(bot_key, definition):
+            return jsonify({"error": "Bot process could not be stopped"}), 503
         
         if action == "stop":
             set_bot_enabled(bot_key, False)

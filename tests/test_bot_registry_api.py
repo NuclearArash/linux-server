@@ -182,6 +182,182 @@ class BotRegistryApiTests(unittest.TestCase):
         self.assertEqual(response.json["job"]["definition"]["entrypoint"], "src/bot.py")
         self.assertNotIn("synthetic-token", response.get_data(as_text=True))
 
+    def test_edit_bot_updates_fields_env_and_icon_without_revealing_pat(self):
+        registry, definition = self.add_bot()
+        set_bot_credentials(
+            registry,
+            definition["id"],
+            {"pat": "synthetic-private-token", "environment": {"BOT_TOKEN": "old-token"}},
+            panel_app.BOT_CREDENTIALS_KEY,
+        )
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+
+        with patch.object(panel_app, "get_bot_proc", return_value=None):
+            response = self.client.put(
+                f"/api/bots/{definition['id']}",
+                json={
+                    "name": "Renamed Bot",
+                    "repository": "https://github.com/example/new-bot.git",
+                    "ref": "feature/branch",
+                    "entrypoint": "package/main.py",
+                    "icon": "🛰️",
+                    "pat": "",
+                    "environment": "BOT_TOKEN=new-token\n# ignored comment",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        updated_registry = panel_app.get_bot_registry()
+        updated = updated_registry["bots"][0]
+        self.assertEqual(updated["name"], "Renamed Bot")
+        self.assertEqual(updated["repository"], "https://github.com/example/new-bot.git")
+        self.assertEqual(updated["ref"], "feature/branch")
+        self.assertEqual(updated["entrypoint"], "package/main.py")
+        self.assertEqual(updated["icon"], "🛰️")
+        credentials = panel_app.get_bot_credentials(updated_registry, definition["id"], panel_app.BOT_CREDENTIALS_KEY)
+        self.assertEqual(credentials["pat"], "synthetic-private-token")
+        self.assertEqual(credentials["environment"], {"BOT_TOKEN": "new-token"})
+        self.assertNotIn("synthetic-private-token", response.get_data(as_text=True))
+
+    def test_update_bot_queues_stopped_update_using_saved_credentials(self):
+        registry, definition = self.add_bot()
+        definition["enabled"] = True
+        set_bot_credentials(
+            registry,
+            definition["id"],
+            {"pat": "synthetic-private-token", "environment": {"BOT_TOKEN": "synthetic-bot-token"}},
+            panel_app.BOT_CREDENTIALS_KEY,
+        )
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+
+        with patch.object(panel_app, "stop_bot_process", return_value=True), patch.object(panel_app.threading.Thread, "start"):
+            response = self.client.post(f"/api/bots/{definition['id']}/update")
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json["job"]["operation"], "update")
+        self.assertFalse(response.json["job"]["definition"]["enabled"])
+        saved_payload = panel_app.BOT_INSTALL_PAYLOADS[response.json["job"]["id"]]
+        self.assertEqual(saved_payload["pat"], "synthetic-private-token")
+        self.assertEqual(saved_payload["environment"], {"BOT_TOKEN": "synthetic-bot-token"})
+        self.assertNotIn("synthetic-private-token", response.get_data(as_text=True))
+        self.assertFalse(panel_app.get_bot_registry()["bots"][0]["enabled"])
+
+    def test_update_worker_swaps_in_complete_staged_checkout(self):
+        registry, definition = self.add_bot()
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+        current_dir = self.root / "bots" / definition["id"]
+        current_dir.mkdir(parents=True)
+        (current_dir / "old-version.txt").write_text("old", encoding="utf-8")
+        job_id = "update-test-job"
+        panel_app._record_bot_job(job_id, "queued", 0, "Queued", bot_id=definition["id"])
+
+        def clone_to_staging(_job_id, update_definition, _pat, repo_dir=None):
+            staging_dir = Path(repo_dir)
+            entrypoint = staging_dir / update_definition["entrypoint"]
+            entrypoint.parent.mkdir(parents=True, exist_ok=True)
+            entrypoint.write_text("new", encoding="utf-8")
+
+        with (
+            patch.object(panel_app, "_clone_bot_repository", side_effect=clone_to_staging),
+            patch.object(panel_app, "_install_bot_dependencies"),
+        ):
+            panel_app._run_bot_update(job_id, definition, "", {})
+
+        self.assertFalse((current_dir / "old-version.txt").exists())
+        self.assertEqual((current_dir / "src" / "bot.py").read_text(encoding="utf-8"), "new")
+        self.assertEqual(panel_app.BOT_INSTALL_JOBS[job_id]["status"], "success")
+        self.assertFalse(panel_app.get_bot_registry()["bots"][0]["enabled"])
+
+    def test_update_worker_preserves_existing_checkout_when_clone_fails(self):
+        registry, definition = self.add_bot()
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+        current_dir = self.root / "bots" / definition["id"]
+        current_dir.mkdir(parents=True)
+        existing_file = current_dir / "working-state.txt"
+        existing_file.write_text("keep me", encoding="utf-8")
+        job_id = "failed-update-job"
+        panel_app._record_bot_job(job_id, "queued", 0, "Queued", bot_id=definition["id"])
+
+        with patch.object(panel_app, "_clone_bot_repository", side_effect=RuntimeError("network timeout")):
+            panel_app._run_bot_update(job_id, definition, "", {})
+
+        self.assertEqual(existing_file.read_text(encoding="utf-8"), "keep me")
+        self.assertFalse(any(self.root.joinpath("bots").glob(f".{definition['id']}.update-*")))
+        self.assertEqual(panel_app.BOT_INSTALL_JOBS[job_id]["status"], "failed")
+
+    def test_get_bot_edit_metadata_does_not_reveal_credentials(self):
+        registry, definition = self.add_bot()
+        set_bot_credentials(
+            registry,
+            definition["id"],
+            {"pat": "synthetic-private-token", "environment": {"BOT_TOKEN": "synthetic-bot-token"}},
+            panel_app.BOT_CREDENTIALS_KEY,
+        )
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+
+        response = self.client.get(f"/api/bots/{definition['id']}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["bot"], definition)
+        self.assertNotIn("synthetic-private-token", response.get_data(as_text=True))
+        self.assertNotIn("synthetic-bot-token", response.get_data(as_text=True))
+
+    def test_icon_only_edit_preserves_running_bot_state(self):
+        registry, definition = self.add_bot()
+        definition["enabled"] = True
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+
+        with patch.object(panel_app, "stop_bot_process") as stop_bot:
+            response = self.client.put(
+                f"/api/bots/{definition['id']}",
+                json={"icon": "🚀"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(panel_app.get_bot_registry()["bots"][0]["enabled"])
+        self.assertEqual(panel_app.get_bot_registry()["bots"][0]["icon"], "🚀")
+        stop_bot.assert_not_called()
+
+    def test_delete_bot_removes_local_registry_credentials_and_directory_but_preserves_shared_cache(self):
+        registry, definition = self.add_bot()
+        set_bot_credentials(
+            registry,
+            definition["id"],
+            {"pat": "synthetic-private-token", "environment": {"BOT_TOKEN": "synthetic-bot-token"}},
+            panel_app.BOT_CREDENTIALS_KEY,
+        )
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+        bot_dir = self.root / "bots" / definition["id"]
+        bot_dir.mkdir(parents=True)
+        (bot_dir / "cached-state.txt").write_text("state", encoding="utf-8")
+
+        with patch.object(panel_app, "stop_bot_process", return_value=True):
+            response = self.client.delete(f"/api/bots/{definition['id']}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["deleted_cache_snapshots"], 0)
+        self.assertIn("shared cache snapshots were preserved", response.json["message"].lower())
+        self.assertEqual(panel_app.get_bot_registry()["bots"], [])
+        self.assertEqual(panel_app.get_bot_registry()["encrypted_credentials"], {})
+        self.assertFalse(bot_dir.exists())
+        self.assertNotIn("synthetic-private-token", response.get_data(as_text=True))
+
+    def test_delete_bot_rolls_back_directory_when_registry_save_fails(self):
+        registry, definition = self.add_bot()
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+        bot_dir = self.root / "bots" / definition["id"]
+        bot_dir.mkdir(parents=True)
+        (bot_dir / "cached-state.txt").write_text("preserve", encoding="utf-8")
+
+        with patch.object(panel_app, "stop_bot_process", return_value=True), patch.object(
+            panel_app, "save_registry", side_effect=OSError("registry save failed")
+        ):
+            response = self.client.delete(f"/api/bots/{definition['id']}")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(panel_app.get_bot_registry()["bots"], [definition])
+        self.assertEqual((bot_dir / "cached-state.txt").read_text(encoding="utf-8"), "preserve")
+
     def test_failed_install_can_be_edited_and_retried_without_resending_secrets(self):
         with patch.object(panel_app.threading.Thread, "start"):
             created = self.client.post(
@@ -285,6 +461,72 @@ class BotRegistryApiTests(unittest.TestCase):
         failure = self.client.get("/api/bots/jobs").get_data(as_text=True)
         self.assertNotIn("synthetic-private-token", failure)
         self.assertIn("[REDACTED]", failure)
+
+    def test_dependency_install_uses_extended_pip_timeout_and_retries(self):
+        bot_id = "d" * 32
+        repo_dir = self.root / "bots" / bot_id
+        python_executable = repo_dir / ".venv" / "bin" / "python"
+        python_executable.parent.mkdir(parents=True)
+        python_executable.touch()
+        (repo_dir / "requirements.txt").write_text("example-package\n", encoding="utf-8")
+        definition = {"id": bot_id}
+
+        with patch.object(panel_app, "_run_install_command") as run_command:
+            panel_app._install_bot_dependencies("test-job", definition)
+
+        command = run_command.call_args.args[0]
+        self.assertIn("--timeout", command)
+        self.assertIn("120", command)
+        self.assertIn("--retries", command)
+        self.assertIn("5", command)
+
+    def test_dependency_read_timeout_is_reported_concisely(self):
+        error = """ERROR: Exception: Traceback (most recent call last):
+TimeoutError: The read operation timed out
+pip._vendor.urllib3.exceptions.ReadTimeoutError: HTTPSConnectionPool(host='files.pythonhosted.org', port=443): Read timed out."""
+
+        message = panel_app.format_bot_install_error(error)
+
+        self.assertIn("Dependency download timed out", message)
+        self.assertIn("retry the installation", message)
+        self.assertNotIn("Traceback", message)
+        self.assertNotIn("files.pythonhosted.org", message)
+
+    def test_other_long_dependency_tracebacks_are_not_shown_to_user(self):
+        error = "ERROR: Exception: Traceback (most recent call last):\n" + ("pip internal stack frame\n" * 80)
+
+        message = panel_app.format_bot_install_error(error)
+
+        self.assertEqual(message, "Installation failed with lengthy output. Check the dependency settings and retry.")
+        self.assertNotIn("Traceback", message)
+
+    def test_failed_dependency_job_does_not_return_pip_traceback(self):
+        with patch.object(panel_app.threading.Thread, "start"):
+            created = self.client.post(
+                "/api/bots",
+                json={
+                    "name": "Slow Download Bot",
+                    "repository": "https://github.com/example/telegram-bot.git",
+                    "ref": "main",
+                    "entrypoint": "src/bot.py",
+                },
+            )
+        job_id = created.json["job"]["id"]
+        payload = panel_app.BOT_INSTALL_PAYLOADS[job_id]
+        read_timeout = "Traceback (most recent call last): ReadTimeoutError: HTTPSConnectionPool(host='files.pythonhosted.org', port=443): Read timed out."
+
+        with patch.object(panel_app, "_clone_bot_repository"), patch.object(
+            panel_app,
+            "_install_bot_dependencies",
+            side_effect=RuntimeError(read_timeout),
+        ):
+            panel_app._run_bot_install(job_id, payload["definition"], payload["pat"], payload["environment"])
+
+        response = self.client.get(f"/api/bots/jobs/{job_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Dependency download timed out", response.json["job"]["message"])
+        self.assertNotIn("Traceback", response.get_data(as_text=True))
 
     def test_control_route_rejects_unknown_bot_id(self):
         response = self.client.post(f"/api/bot/{'b' * 32}/start")
