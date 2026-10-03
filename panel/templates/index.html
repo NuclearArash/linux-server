@@ -13,6 +13,9 @@
   --surface-3: #1b2226;
   --line: #263036;
   --line-strong: #344149;
+  --scrollbar-thumb: #344149;
+  --scrollbar-thumb-hover: #4d777a;
+  --scrollbar-track: #0f1316;
   --text: #edf2f1;
   --text-2: #a9b5b6;
   --text-3: #6f7d80;
@@ -37,6 +40,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   outline: 1px solid var(--accent); outline-offset: 2px;
 }
 [hidden] { display:none !important; }
+
+/* Keep native scrollbars consistent across every panel surface. */
+* {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-width: thin;
+}
+*::-webkit-scrollbar { width:9px; height:9px; }
+*::-webkit-scrollbar-track { background:var(--scrollbar-track); }
+*::-webkit-scrollbar-thumb {
+  border:2px solid var(--scrollbar-track);
+  border-radius:5px;
+  background:var(--scrollbar-thumb);
+  background-clip:padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background:var(--scrollbar-thumb-hover); }
+*::-webkit-scrollbar-corner { background:var(--scrollbar-track); }
 
 /* Shell */
 .app { min-height: 100vh; display: grid; grid-template-columns: var(--sidebar) minmax(0,1fr); }
@@ -281,7 +300,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .file-preview-content { padding-right:15px; padding-left:12px; color:inherit; white-space:pre; }
 
 /* Assistant */
-.assistant-chat { min-height:620px; display:grid; grid-template-columns:220px minmax(0,1fr); position:relative; transition:grid-template-columns .2s ease; }
+.assistant-chat { height:620px; min-height:0; display:grid; grid-template-columns:220px minmax(0,1fr); position:relative; transition:grid-template-columns .2s ease; }
 .assistant-chat.sidebar-collapsed { grid-template-columns:52px minmax(0,1fr); }
 .assistant-sidebar { background:#0f1417; border-right:1px solid var(--line); display:flex; flex-direction:column; min-width:0; }
 .assistant-sidebar.collapsed .assistant-sidebar-title,
@@ -325,16 +344,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .assistant-sidebar.collapsed .assistant-rail-btn { width:28px; height:28px; display:grid; place-items:center; border:1px solid #303b40; border-radius:4px; background:#141a1d; color:#869295; cursor:pointer; }
 .assistant-sidebar.collapsed .assistant-rail-btn:hover { border-color:#476066; background:#182124; color:#c5d1d1; }
 .assistant-sidebar.collapsed .assistant-rail-btn .lucide-icon { width:16px; height:16px; }
-.assistant-main { min-width:0; display:flex; flex-direction:column; background:#0b1012; }
+.assistant-main { min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; background:#0b1012; }
 .assistant-model-strip { min-height:52px; display:flex; align-items:center; gap:9px; padding:0 13px; border-bottom:1px solid var(--line); }
 .assistant-model-label { color:#647174; font-size:9px; text-transform:uppercase; letter-spacing:.1em; }
 .assistant-model-value { color:#bdc8c8; font-family:var(--mono); font-size:10px; }
 .model-status { display:inline-flex; align-items:center; gap:6px; margin-left:auto; color:#7d8a8c; font-family:var(--mono); font-size:8px; }
-.assistant-messages { flex:1; overflow:auto; padding:22px clamp(16px,4vw,48px); }
-.assistant-message-group { max-width:820px; margin:0 auto 15px; }
-.assistant-message { padding:11px 13px; border:1px solid #252f33; border-radius:5px; background:#12181b; color:#c6cece; font-size:12px; line-height:1.6; }
+.assistant-messages { flex:1; min-height:0; overflow:auto; padding:22px clamp(16px,4vw,48px); }
+.assistant-message-group { display:flex; flex-direction:column; align-items:flex-start; gap:5px; width:100%; max-width:820px; margin:0 auto 15px; }
+.assistant-message-group.user { align-items:flex-end; }
+.assistant-message-content { display:flex; flex-direction:column; align-items:flex-start; width:fit-content; max-width:75%; min-width:0; }
+.assistant-message-group.assistant .assistant-message-actions { align-self:flex-end; }
+.assistant-message-group.user .assistant-message-content { align-self:flex-end; }
+.assistant-message { width:fit-content; max-width:100%; min-width:0; padding:11px 13px; border:1px solid #252f33; border-radius:5px; background:#12181b; color:#c6cece; font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
 .assistant-message.user { background:#142024; border-color:#294148; }
 .assistant-message.assistant { background:#101619; }
+.assistant-message-actions { display:flex; gap:5px; }
 .assistant-message-action { opacity:0; visibility:hidden; pointer-events:none; border:0; background:transparent; color:#687679; font-size:9px; cursor:pointer; padding:4px 2px; }
 .assistant-message-group:hover .assistant-message-action,.assistant-message-group:focus-within .assistant-message-action { opacity:1; visibility:visible; pointer-events:auto; }
 .assistant-composer { min-height:var(--assistant-bottom-rail); max-height:200px; flex:0 0 auto; display:flex; align-items:center; padding:8px 12px; border-top:0; }
@@ -3015,14 +3039,15 @@ function renderMessages() {
     box.replaceChildren(...assistant.messages.map((message, index) => {
         const messageElement = h('div', { class: `assistant-message ${message.role}` });
         renderChatMessage(messageElement, message.content);
-        const group = h('div', { class: `assistant-message-group ${message.role}` },
-            messageElement,
+        const actions = h('div', { class: 'assistant-message-actions' },
             h('button', {
                 class: 'assistant-message-action', type: 'button', title: 'Copy message', 'aria-label': 'Copy message', html: ICONS.copy,
                 onclick: () => copyText(message.content, 'Message copied to clipboard!'),
             }));
+        const content = h('div', { class: 'assistant-message-content' }, messageElement, actions);
+        const group = h('div', { class: `assistant-message-group ${message.role}` }, content);
         if (message.role === 'assistant') {
-            group.append(h('button', {
+            actions.append(h('button', {
                 class: 'assistant-message-action', type: 'button', title: 'Regenerate response', 'aria-label': 'Regenerate response', html: ICONS.refreshCw,
                 onclick: () => regenerate(index),
             }));
