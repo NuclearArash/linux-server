@@ -372,6 +372,25 @@ class BotRegistryApiTests(unittest.TestCase):
         self.assertEqual(response.json["fleet"], {"online": 0, "total": 0})
         self.assertEqual(response.json["bots"], {})
 
+    def test_bot_status_reports_error_when_enabled_process_has_exited(self):
+        _, definition = self.add_bot()
+        definition["enabled"] = True
+
+        with patch.object(panel_app, "get_bot_proc", return_value=None):
+            status = panel_app.get_bot_statuses({"bots": [definition]})[definition["id"]]
+
+        self.assertFalse(status["running"])
+        self.assertTrue(status["error"])
+
+    def test_bot_status_does_not_report_error_when_intentionally_stopped(self):
+        _, definition = self.add_bot()
+
+        with patch.object(panel_app, "get_bot_proc", return_value=None):
+            status = panel_app.get_bot_statuses({"bots": [definition]})[definition["id"]]
+
+        self.assertFalse(status["running"])
+        self.assertFalse(status["error"])
+
     def test_environment_parser_ignores_full_line_comments(self):
         environment = panel_app.parse_environment_assignments(
             "# credentials for the bot\nBOT_TOKEN = one two\n   # ignored too\nOTHER = value"
@@ -498,7 +517,6 @@ class BotRegistryApiTests(unittest.TestCase):
             "HERMES_TELEGRAM_BOT_TOKEN",
             "STATUS_BOT_TOKEN",
             "OWNER_ID",
-            "API_KEY_9ROUTER",
         }
         with patch.dict(panel_app.os.environ, {"SERVER_USERNAME": "panel-user"}, clear=True):
             response = self.client.get("/api/env/server-secrets")
@@ -506,9 +524,28 @@ class BotRegistryApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(expected_keys.issubset(response.json["env"]))
         self.assertEqual(set(response.json["env"]), expected_keys)
+        self.assertNotIn("API_KEY_9ROUTER", response.json["env"])
         self.assertEqual(response.json["env"]["SERVER_USERNAME"], "panel-user")
         self.assertEqual(response.json["env"]["SERVER_PASSWORD"], "")
         self.assertEqual(response.json["count"], len(response.json["env"]))
+
+    def test_server_secrets_environment_reads_hermes_telegram_token_from_hermes_env(self):
+        hermes_env = self.root / "hermes.env"
+        hermes_env.write_text(
+            "TELEGRAM_BOT_TOKEN=synthetic-telegram-token\n",
+            encoding="utf-8",
+        )
+        with (
+            patch.object(panel_app, "HERMES_ENV_FILE", str(hermes_env)),
+            patch.dict(panel_app.os.environ, {}, clear=True),
+        ):
+            response = self.client.get("/api/env/server-secrets")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json["env"]["HERMES_TELEGRAM_BOT_TOKEN"],
+            "synthetic-telegram-token",
+        )
 
     def test_logs_endpoint_reads_the_three_named_service_logs(self):
         service_logs = {

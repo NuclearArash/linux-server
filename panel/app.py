@@ -103,7 +103,6 @@ SERVER_SECRET_KEYS = [
     "OWNER_ID",
     "HERMES_API_SERVER_KEY",
     "HERMES_TELEGRAM_BOT_TOKEN",
-    "API_KEY_9ROUTER",
 ]
 STATUS_BOT_LOG_PATH = "/tmp/status-bot.log"
 SERVICE_LOG_PATHS = {
@@ -772,6 +771,7 @@ def get_bot_statuses(registry=None):
             "name": definition["name"],
             "icon": definition.get("icon") or "🤖",
             "running": running,
+            "error": bool(definition.get("enabled")) and not running,
             "pid": proc.pid if running else "—",
             "uptime": format_uptime(time.time() - proc.create_time()) if running else "—",
             "restarts": BOT_RESTART_COUNTS.get(bot_id, 0),
@@ -1340,6 +1340,10 @@ def get_logs(bot_key):
 def get_env(env_key):
     if env_key == "server-secrets":
         values = {key: os.environ.get(key, "") for key in SERVER_SECRET_KEYS}
+        values["HERMES_TELEGRAM_BOT_TOKEN"] = (
+            os.environ.get("HERMES_TELEGRAM_BOT_TOKEN")
+            or read_hermes_env().get("TELEGRAM_BOT_TOKEN", "")
+        )
         if os.environ.get("TAILSCALE_AUTHKEY") is not None:
             values["TAILSCALE_AUTHKEY"] = os.environ["TAILSCALE_AUTHKEY"]
         return jsonify({"env": values, "count": len(values)})

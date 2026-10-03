@@ -180,6 +180,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .status.running { color:#86d0a6; border-color:#294438; }
 .status.running .status-dot { background:var(--good); }
 .status.stopped { color:#879194; }
+.status.error { color:#e0a09b; border-color:#5b3838; background:#241718; }
+.status.error .status-dot { background:var(--bad); }
 .bot-stats { display:grid; grid-template-columns:repeat(3,1fr); border-top:1px solid #222c30; border-bottom:1px solid #222c30; margin:16px 0; }
 .bot-stat { padding:10px 8px; border-right:1px solid #222c30; }
 .bot-stat:last-child { border-right:0; }
@@ -245,7 +247,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .console-tabs .tab-btn { width:auto; min-height:34px; padding:0 10px; border-radius:4px; white-space:nowrap; }
 .console-right { width:190px; flex:0 0 190px; }
 .console-toolbar { min-height:48px; display:flex; align-items:center; gap:9px; padding:8px 12px; border-bottom:1px solid var(--line); }
-.console-toolbar .log-search { margin-left:auto; width:min(270px,40vw); }
+.log-search-wrap { position:relative; flex:0 1 min(270px,40vw); min-width:0; }
+.log-search-wrap .log-search { width:100%; padding-left:32px; }
+.log-search-icon { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:#728084; pointer-events:none; }
+.console-toolbar #log-state { margin-left:auto; }
 .env-visibility-toggle { min-height:32px; display:inline-flex; align-items:center; gap:9px; padding:0; border:0; background:transparent; color:#aeb9ba; cursor:pointer; font-size:10px; font-weight:600; }
 .env-visibility-toggle:hover { color:#edf2f1; }
 .env-visibility-toggle:focus-visible { outline:1px solid var(--accent); outline-offset:2px; }
@@ -264,7 +269,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .env-table th,.env-table td { padding:10px 12px; border-bottom:1px solid #202a2e; text-align:left; }
 .env-table th { color:#667477; font-size:8px; letter-spacing:.12em; text-transform:uppercase; }
 .env-table td:first-child { width:36%; color:#aeb9ba; }
-.env-table td:last-child { color:#7e8b8e; }
+.env-table td:last-child { color:#7e8b8e; overflow-wrap:anywhere; }
 .env-empty { color:#566468 !important; text-align:center !important; padding:28px !important; }
 .file-list { border-bottom:1px solid var(--line); }
 .file-item { min-height:43px; display:flex; align-items:center; justify-content:space-between; gap:15px; padding:0 13px; border-bottom:1px solid #1d272b; cursor:pointer; }
@@ -302,7 +307,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* Assistant */
 .assistant-chat { height:620px; min-height:0; display:grid; grid-template-columns:220px minmax(0,1fr); position:relative; transition:grid-template-columns .2s ease; }
 .assistant-chat.sidebar-collapsed { grid-template-columns:52px minmax(0,1fr); }
-.assistant-sidebar { background:#0f1417; border-right:1px solid var(--line); display:flex; flex-direction:column; min-width:0; }
+.assistant-sidebar { background:#0f1417; border-right:1px solid var(--line); display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; }
 .assistant-sidebar.collapsed .assistant-sidebar-title,
 .assistant-sidebar.collapsed .assistant-session-list,
 .assistant-sidebar.collapsed .assistant-sidebar-divider,
@@ -314,7 +319,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .assistant-sidebar-title { color:#aeb9ba; font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
 .assistant-sidebar-actions { display:flex; gap:4px; }
 .assistant-sidebar-toggle { width:28px;height:28px;display:grid;place-items:center;border:1px solid #303b40;border-radius:4px;background:#141a1d;color:#869295;cursor:pointer; }
-.assistant-session-list { flex:1; overflow:auto; padding:8px; }
+.assistant-session-list { flex:1; min-height:0; overflow:auto; padding:8px; }
 .assistant-session-item { display:flex; align-items:center; gap:7px; min-height:34px; padding:0 7px; border:1px solid transparent; border-radius:4px; color:#899597; cursor:pointer; }
 .assistant-session-item:hover { background:#151c1f; color:#cbd3d3; }
 .assistant-session-item.active { background:#172125; border-color:#2b3b40; color:#e1e8e7; }
@@ -429,6 +434,12 @@ dialog::backdrop { background:rgba(4,7,8,.72); }
 
 @keyframes job-expiry { from { stroke-dashoffset:0; } to { stroke-dashoffset:50.27; } }
 
+@media (max-width:950px) {
+  .app { grid-template-columns:minmax(0,1fr); }
+  .rail { position:static; width:auto; height:auto; border-right:0; border-bottom:1px solid var(--line); padding:10px 12px; }
+  .rail-label,.rail .nav,.rail-spacer,.host-mini { display:none; }
+  .rail-brand { padding:2px 5px; }
+}
 @media (max-width:1050px) {
   :root { --sidebar:200px; }
   .main { padding:0 22px 36px; }
@@ -454,7 +465,7 @@ dialog::backdrop { background:rgba(4,7,8,.72); }
   .console-header { align-items:stretch; flex-direction:column; padding:9px; }
   .console-right { width:100%; flex-basis:auto; }
   .console-toolbar { flex-wrap:wrap; }
-  .console-toolbar .log-search { margin-left:0; width:100%; order:5; }
+  .log-search-wrap { flex-basis:100%; width:100%; }
     .assistant-chat, .assistant-chat.sidebar-collapsed { grid-template-columns:1fr; }
   .assistant-sidebar { position:absolute; inset:0 auto 0 0; width:min(86%,320px); z-index:20; transform:translateX(-105%); transition:transform .2s ease; box-shadow:20px 0 50px rgba(0,0,0,.4); }
   .assistant-chat.drawer-open .assistant-sidebar { transform:translateX(0); }
@@ -604,7 +615,7 @@ dialog::backdrop { background:rgba(4,7,8,.72); }
         </div>
 
         <div id="tab-logs">
-          <div class="console-toolbar"><div aria-live="polite" class="log-state status-indicator" data-state="busy" id="log-state" role="status"><span class="log-state-dot"></span><span id="log-state-text">BUSY</span></div><div class="log-meta" id="log-target">Live system logs</div><input class="log-search field" id="log-search" placeholder="Filter logs…" type="search"><div class="log-meta" id="log-count">0 lines</div><button class="btn btn-pause" id="pause-logs" type="button">Pause</button></div>
+          <div class="console-toolbar"><div class="log-search-wrap"><span aria-hidden="true" class="log-search-icon" data-lucide="funnel"></span><input class="log-search field" id="log-search" placeholder="Filter logs…" type="search"></div><button class="btn btn-pause" id="pause-logs" type="button"><span data-lucide="pause"></span><span>Pause</span></button><button aria-label="Copy visible logs" class="btn" id="copy-logs" title="Copy visible logs" type="button"><span data-lucide="copy"></span><span>Copy</span></button><div class="log-meta" id="log-count">0 lines</div><div aria-live="polite" class="log-state status-indicator" data-state="busy" id="log-state" role="status"><span class="log-state-dot"></span><span id="log-state-text">BUSY</span></div></div>
           <div class="console-body"><div class="logs-box" id="logs-content">Loading logs…</div></div>
         </div>
 
@@ -736,7 +747,7 @@ const POLL_LOGS_MS = 5000;
 const POLL_ASSISTANT_MS = 15000;
 const TAB_IDS = ['assistant', 'logs', 'env', 'files'];
 const DEFAULT_CHAT_TITLE = 'New chat';
-const MOBILE_QUERY = window.matchMedia('(max-width: 520px)');
+const MOBILE_QUERY = window.matchMedia('(max-width: 760px)');
 
 // Fallback until GET /api/assistant/settings returns the server's list (ids match assistant_settings.PROVIDERS).
 const PROVIDER_FALLBACK = [
@@ -764,6 +775,7 @@ const ICON_PATHS = {
     chevronRight: '<path d="m9 18 6-6-6-6"/>',
     copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
     file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/>',
+    funnel: '<path d="M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.74 1.67l7.225 7.99A2 2 0 0 1 10 14z"/>',
     folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     gamepad: '<path d="M6 12h4m-2-2v4"/><path d="M14 13h.01M18 11h.01"/><path d="M6.5 7h11a4.5 4.5 0 0 1 4.4 5.4l-1 4.5a2.5 2.5 0 0 1-4.1 1.3l-2.1-1.8h-5.4l-2.1 1.8a2.5 2.5 0 0 1-4.1-1.3l-1-4.5A4.5 4.5 0 0 1 6.5 7Z"/>',
     logOut: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
@@ -1395,8 +1407,8 @@ function renderBotCards() {
                     h('div', {},
                         h('div', { class: 'bot-name', text: bot.name || key }),
                         h('div', { class: 'bot-id', text: key }))),
-                h('div', { class: `status ${bot.running ? 'running' : 'stopped'}`, 'data-bot-status': '' },
-                    h('span', { class: 'status-dot' }), h('span', { 'data-bot-field': 'status', text: bot.running ? 'RUNNING' : 'STOPPED' }))),
+                h('div', { class: `status ${bot.running ? 'running' : bot.error ? 'error' : 'stopped'}`, 'data-bot-status': '' },
+                    h('span', { class: 'status-dot' }), h('span', { 'data-bot-field': 'status', text: bot.running ? 'RUNNING' : bot.error ? 'ERROR' : 'STOPPED' }))),
             h('div', { class: 'bot-stats' },
                 h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'PID' }), h('div', { class: 'stat-value', 'data-bot-field': 'pid', text: bot.pid || '—' })),
                 h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Uptime' }), h('div', { class: 'stat-value', 'data-bot-field': 'uptime', text: bot.uptime || '—' })),
@@ -1424,9 +1436,10 @@ function renderBotCards() {
         const card = Array.from(grid.children).find(child => child.dataset.botCard === key);
         if (!card) return;
         const running = !!bot.running;
+        const error = !running && !!bot.error;
         const status = card.querySelector('[data-bot-status]');
-        status.className = `status ${running ? 'running' : 'stopped'}`;
-        status.querySelector('[data-bot-field="status"]').textContent = running ? 'RUNNING' : 'STOPPED';
+        status.className = `status ${running ? 'running' : error ? 'error' : 'stopped'}`;
+        status.querySelector('[data-bot-field="status"]').textContent = running ? 'RUNNING' : error ? 'ERROR' : 'STOPPED';
         const iconButton = card.querySelector('[data-bot-icon]');
         iconButton.textContent = botIconEmoji(bot.icon);
         iconButton.setAttribute('aria-label', `Change ${bot.name || key} icon`);
@@ -2173,7 +2186,6 @@ async function refreshLogs() {
     // While paused, only a target switch fetches (once) so the view never shows another bot's logs.
     if (state.tab !== 'logs' || (state.logs.paused && !targetChanged)) return;
     state.logs.target = key;
-    $('log-target').textContent = label;
     state.logs.health = 'busy';
     renderLogState();
     try {
@@ -3413,6 +3425,7 @@ function bindEvents() {
     $('bot-select').addEventListener('change', reloadActiveTab);
     $('log-search').addEventListener('input', () => renderLogs());
     $('pause-logs').addEventListener('click', togglePauseLogs);
+    $('copy-logs').addEventListener('click', () => copyText($('logs-content').textContent, 'Visible logs copied to clipboard!'));
     $('toggle-env-mask').addEventListener('click', () => { state.env.masked = !state.env.masked; renderEnv(); });
     $('parent-dir-btn').addEventListener('click', () => { if (state.files.parent) loadFiles(state.files.parent); });
     $('file-search').addEventListener('input', queueFileSearch);
