@@ -946,15 +946,13 @@ function onModelKeydown(event) {
 async function fetchModels() {
     const provider = $('assistant-provider-select').value;
     const baseUrl = $('assistant-base-url').value.trim();
-    const status = $('assistant-settings-status');
     if (provider === 'custom' && !baseUrl) {
-        status.textContent = 'Enter a base URL first';
+        showToast('Enter a base URL first', 'error');
         $('assistant-base-url').focus();
         return;
     }
     const button = $('assistant-fetch-btn');
     button.textContent = 'Fetching...';
-    status.textContent = 'Fetching models...';
     await withBusy(button, async () => {
         try {
             const data = await apiJson('/api/assistant/models', jsonOptions('POST', {
@@ -964,13 +962,11 @@ async function fetchModels() {
             }), 'Model fetch failed');
             const models = Array.isArray(data.models) ? data.models : [];
             setModelOptions(models);
-            status.textContent = models.length ? `Loaded ${models.length} models - pick one or type your own` : 'Provider returned no models';
             if (models.length) {
                 $('assistant-model').focus();
                 openModelList(false);
             }
         } catch (error) {
-            status.textContent = error.message;
             showToast(error.message, 'error');
         } finally {
             button.textContent = '↻ Fetch';
@@ -980,8 +976,6 @@ async function fetchModels() {
 
 async function saveProvider() {
     const provider = $('assistant-provider-select').value;
-    const status = $('assistant-settings-status');
-    status.textContent = 'Saving and restarting Hermes...';
     setModelStatus('checking', { hint: 'Restarting Hermes' });
     await withBusy($('assistant-save-btn'), async () => {
         try {
@@ -991,12 +985,10 @@ async function saveProvider() {
                 api_key: $('assistant-api-key').value.trim(),
                 model: $('assistant-model').value.trim(),
             }, { 'X-CSRF-Token': await assistantCsrf() }), 'Save failed');
-            status.textContent = 'Saved and Hermes restarted';
             $('assistant-api-key').value = '';
             showToast(`${provider} configured.`);
             loadCurrentSettings();
         } catch (error) {
-            status.textContent = error.message;
             showToast(error.message, 'error');
         } finally {
             checkAssistantHealth();

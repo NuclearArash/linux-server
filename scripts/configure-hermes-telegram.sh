@@ -2,7 +2,7 @@
 # Configures Hermes' built-in Telegram gateway from GitHub secrets. Run before `hermes gateway`.
 #
 #   HERMES_TELEGRAM_BOT_TOKEN       bot token from @BotFather (required to enable Telegram)
-#   HERMES_TELEGRAM_ALLOWED_USERS   comma-separated numeric Telegram user IDs (default: STATUS_CHAT_ID)
+#   HERMES_TELEGRAM_ALLOWED_USERS   comma-separated numeric Telegram user IDs (default: OWNER_ID)
 #   HERMES_TELEGRAM_HOME_CHANNEL    chat that receives cron results/alerts (default: first allowed user)
 #
 # Exit status: 0 = configured, 2 = skipped (missing/invalid settings). It is never fatal for the caller:
@@ -12,8 +12,18 @@ set -uo pipefail
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 HERMES_BIN="${HERMES_BIN:-hermes}"
 ENV_FILE="$HERMES_HOME/.env"
+export HERMES_HOME
 
 skip() { echo "Telegram: $1 Built-in Telegram left unconfigured."; exit 2; }
+
+if ! mkdir -p "$HERMES_HOME" || ! chmod 700 "$HERMES_HOME"; then
+    echo "Telegram: failed to prepare $HERMES_HOME."
+    exit 1
+fi
+if ! "$HERMES_BIN" config set gateway.platforms.telegram.gateway_restart_notification false >/dev/null; then
+    echo "Telegram: failed to disable Hermes gateway restart notifications."
+    exit 1
+fi
 
 # Replaces (or appends) KEY=value in ~/.hermes/.env, keeping comments and other lines. Values never hit argv.
 upsert_env() {
@@ -33,9 +43,9 @@ token="${HERMES_TELEGRAM_BOT_TOKEN:-}"
 
 allowed="${HERMES_TELEGRAM_ALLOWED_USERS:-}"
 if [ -z "$allowed" ]; then
-    # In a private chat the chat ID equals the user ID, so the status chat identifies the owner.
-    [[ "${STATUS_CHAT_ID:-}" =~ ^[0-9]+$ ]] || skip "no owner user ID: set HERMES_TELEGRAM_ALLOWED_USERS (STATUS_CHAT_ID is missing or not a private chat)."
-    allowed="$STATUS_CHAT_ID"
+    # In a private chat the chat ID equals the user ID, so OWNER_ID identifies the owner.
+    [[ "${OWNER_ID:-}" =~ ^[0-9]+$ ]] || skip "no owner user ID: set HERMES_TELEGRAM_ALLOWED_USERS (OWNER_ID is missing or not a private chat)."
+    allowed="$OWNER_ID"
 fi
 allowed="${allowed// /}"
 [[ "$allowed" =~ ^[0-9]+(,[0-9]+)*$ ]] || skip "HERMES_TELEGRAM_ALLOWED_USERS must be comma-separated numeric user IDs."
@@ -43,7 +53,6 @@ allowed="${allowed// /}"
 home_channel="${HERMES_TELEGRAM_HOME_CHANNEL:-${allowed%%,*}}"
 [[ "$home_channel" =~ ^-?[0-9]+$ ]] || skip "HERMES_TELEGRAM_HOME_CHANNEL must be a numeric chat ID."
 
-mkdir -p "$HERMES_HOME" && chmod 700 "$HERMES_HOME"
 upsert_env TELEGRAM_BOT_TOKEN "$token" || skip "could not write $ENV_FILE."
 upsert_env TELEGRAM_ALLOWED_USERS "$allowed"
 upsert_env TELEGRAM_HOME_CHANNEL "$home_channel"

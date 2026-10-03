@@ -83,6 +83,65 @@ class BotRegistryApiTests(unittest.TestCase):
         )
         self.assertFalse(response.json["truncated"])
 
+    def test_file_listing_marks_symlink_entries_for_recursive_search(self):
+        current = self.root / "workspace"
+        current.mkdir()
+        (current / "file.txt").write_text("content", encoding="utf-8")
+
+        response = self.client.get("/api/files", query_string={"path": str(current)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json["entries"][0]["is_symlink"])
+
+    def test_file_search_marks_recursive_results_for_older_frontends(self):
+        current = self.root / "workspace"
+        (current / "nested").mkdir(parents=True)
+
+        response = self.client.get(
+            "/api/files/search",
+            query_string={"path": str(current), "q": "needle"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json["recursive"])
+
+    def test_file_search_falls_back_to_recursive_listing_for_older_backends(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn("data.recursive === true", page)
+        self.assertIn("collectFileSearchEntries(rootPath, query, requestId)", page)
+
+    def test_file_search_returns_duplicate_filenames_with_distinct_relative_paths(self):
+        current = self.root / "workspace"
+        bot_directories = ("orbit-alerts", "market-watch", "docs-sync", "queue-worker")
+        for directory in bot_directories:
+            bot_directory = current / "bots" / directory
+            bot_directory.mkdir(parents=True)
+            (bot_directory / "bot.py").write_text("pass\n", encoding="utf-8")
+
+        response = self.client.get(
+            "/api/files/search",
+            query_string={"path": str(current), "q": "bot.py"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        entries = response.json["entries"]
+        self.assertEqual(len(entries), 4)
+        self.assertEqual({entry["name"] for entry in entries}, {"bot.py"})
+        self.assertEqual(
+            {entry["relative_path"] for entry in entries},
+            {f"bots/{directory}/bot.py" for directory in bot_directories},
+        )
+
+    def test_file_search_results_render_path_as_a_separate_subtitle(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn("class: 'file-item-path'", page)
+        self.assertIn("class: 'file-item-name', text: entry.name", page)
+        self.assertIn("function getFileEntrySubtitle(entry, searchResult)", page)
+
     def test_delete_file_explorer_entry_removes_file_or_folder(self):
         current = self.root / "workspace"
         current.mkdir()
@@ -100,6 +159,182 @@ class BotRegistryApiTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
             self.assertFalse(target.exists())
+
+    def test_file_explorer_delete_uses_a_styled_accessible_dialog(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn('id="file-delete-dialog"', page)
+        self.assertIn('aria-labelledby="file-delete-title"', page)
+        self.assertIn('id="file-delete-description"', page)
+        self.assertIn('id="file-delete-cancel"', page)
+        self.assertIn('id="file-delete-confirm"', page)
+        self.assertNotIn("if (!confirm(`Delete ${entry.name}", page)
+
+    def test_bot_delete_dialog_has_destructive_action_styling_and_icons(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn('class="bot-delete-dialog-icon"><span data-lucide="trash"></span></span>', page)
+        self.assertIn('class="bot-delete-dialog-kicker">Permanent action</p>', page)
+        self.assertIn('<dialog aria-describedby="bot-delete-description bot-delete-warning" aria-labelledby="bot-delete-title" class="bot-delete-dialog" id="bot-delete-dialog" role="alertdialog">', page)
+        self.assertIn('id="bot-delete-title">Permanently delete this bot?</h2>', page)
+        self.assertIn('id="bot-delete-description"></p>', page)
+        self.assertIn('id="bot-delete-warning">This action cannot be undone.</p>', page)
+        self.assertIn('autofocus class="btn" id="bot-delete-cancel" type="button">Cancel</button>', page)
+        self.assertIn('id="bot-delete-confirm" type="submit"><span data-lucide="trash"></span><span id="bot-delete-confirm-label">Delete bot</span>', page)
+        self.assertIn("$('bot-delete-title').textContent = `Permanently delete ${botName}?`;", page)
+        self.assertIn("$('bot-delete-confirm-label').textContent = `Delete ${botName}`;", page)
+        self.assertIn(".btn-delete-bot { min-height:36px;", page)
+        self.assertIn("background:#a83f3b", page)
+
+    def test_bot_update_uses_a_themed_confirmation_dialog(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn('<dialog aria-describedby="bot-update-description bot-update-state" aria-labelledby="bot-update-title" class="bot-update-dialog" id="bot-update-dialog" role="dialog">', page)
+        self.assertIn('data-lucide="refreshCw"', page)
+        self.assertIn('id="bot-update-confirm-label">Update bot</span>', page)
+        self.assertIn("This bot is running. It will stop during the update and restart if the update succeeds.", page)
+        self.assertIn("This bot is stopped. It will stay stopped after a successful update.", page)
+        self.assertIn("$('bot-update-form').addEventListener('submit', confirmUpdateBot)", page)
+        self.assertNotIn("if (bot.running && !confirm(", page)
+
+    def test_file_preview_includes_line_number_gutter(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn('id="file-preview-lines"', page)
+        self.assertIn('id="file-preview-content"', page)
+        self.assertIn("function renderFilePreview(content, path, activate = true)", page)
+        self.assertIn("lines.map((_, index) => index + 1).join('\\n')", page)
+
+    def test_file_preview_has_a_filename_tab(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn("class: 'file-preview-tab'", page)
+        self.assertIn("function renderFilePreview(content, path, activate = true)", page)
+        self.assertIn("class: 'file-preview-name'", page)
+
+    def test_file_preview_supports_multiple_closable_tabs(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn('role="tablist" aria-label="Open files" id="file-preview-tabs"', page)
+        self.assertIn("function renderFileTabs()", page)
+        self.assertIn("function closeFilePreview(path)", page)
+        self.assertIn("'data-file-preview-close': preview.path", page)
+        self.assertIn("'aria-label': `Close ${fileName}`", page)
+        self.assertIn("event.key === 'ArrowRight'", page)
+
+    def test_file_preview_remains_visible_when_files_tab_is_reloaded(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+        load_files = page.split("async function loadFiles(", 1)[1].split(
+            "\nasync function collectFileSearchEntries", 1
+        )[0]
+
+        self.assertIn("renderActiveFilePreview();", load_files)
+        self.assertNotIn("$('file-preview-box').hidden = true;", load_files)
+
+    def test_connection_indicators_reflect_live_health_and_pulse_by_state(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+        refresh_status = page.split("async function refreshStatus()", 1)[1].split(
+            "\n/* 5. Console tabs", 1
+        )[0]
+
+        self.assertIn('id="rail-connection-status"', page)
+        self.assertIn("function setConnectionState(status, hint = '')", page)
+        self.assertIn("['rail-connection-status', 'rail-connection-label']", page)
+        self.assertIn("setConnectionState('busy')", refresh_status)
+        self.assertIn("setConnectionState('connected')", refresh_status)
+        self.assertIn("setConnectionState('error'", refresh_status)
+        self.assertIn("state.logs.health = 'busy'", page)
+        self.assertIn("state.logs.health = 'connected'", page)
+        self.assertIn("state.logs.health = 'error'", page)
+        self.assertIn("setModelStatus('connected'", page)
+        self.assertIn("setModelStatus('error'", page)
+        self.assertIn(".connection[data-state=connected]", page)
+        self.assertIn(".connection[data-state=busy]", page)
+        self.assertIn(".connection[data-state=error]", page)
+        self.assertIn("@keyframes status-pulse", page)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", page)
+
+    def test_collapsed_assistant_providers_button_sits_at_rail_bottom_with_sliders_icon(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn("--assistant-bottom-rail:64px;", page)
+        self.assertIn(".assistant-sidebar-footer { margin-top:auto; flex:0 0 var(--assistant-bottom-rail);", page)
+        self.assertIn(".assistant-composer { min-height:var(--assistant-bottom-rail);", page)
+        self.assertIn(".assistant-sidebar.collapsed .assistant-sidebar-footer { justify-content:center;", page)
+        self.assertIn('id="rail-providers-btn" title="Providers" type="button"><span data-lucide="slidersHorizontal">', page)
+        self.assertIn("slidersHorizontal:", page)
+
+    def test_provider_settings_panel_uses_transitionable_visibility(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn(".assistant-settings-panel { max-height:0;", page)
+        self.assertIn("transition:max-height .28s ease", page)
+        self.assertIn(".assistant-sidebar.settings-open .assistant-settings-panel { max-height:480px;", page)
+        self.assertIn(".assistant-settings-panel { max-height:0; padding:0 11px;", page)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", page)
+
+    def test_assistant_chat_list_renders_newest_sessions_first(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn("const newestFirst = [...sessions].reverse();", page)
+        self.assertIn("...newestFirst.map(session =>", page)
+
+    def test_assistant_chat_history_actions_are_revealed_on_hover_and_focus(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn(".session-actions { display:flex; gap:1px; opacity:0; visibility:hidden;", page)
+        self.assertIn(".assistant-session-item:hover .session-actions", page)
+        self.assertIn(".assistant-session-item:focus-within .session-actions", page)
+        self.assertIn("@media (hover:none)", page)
+
+    def test_assistant_send_button_is_icon_only_and_inside_composer_input(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn('<div class="assistant-input-wrap"><textarea aria-label="Message Hermes"', page)
+        self.assertIn('id="assistant-input" placeholder="Ask Hermes to inspect or manage the server…" rows="2"></textarea><button aria-label="Send message" class="btn btn-start assistant-send" id="assistant-send" title="Send message" type="button"><span data-lucide="sendHorizontal"></span></button></div></div>', page)
+        self.assertIn("sendHorizontal:", page)
+        self.assertIn(".assistant-composer { min-height:var(--assistant-bottom-rail); max-height:200px; flex:0 0 auto; display:flex; align-items:center;", page)
+        self.assertIn("border-top:0", page)
+        self.assertIn(".assistant-input-wrap { flex:1; min-width:0; max-height:184px; display:flex; align-items:center;", page)
+        self.assertIn("height:34px; min-height:34px; max-height:174px", page)
+        self.assertIn("assistantInput.addEventListener('input', resizeAssistantInput)", page)
+        self.assertIn("input.style.height = `${Math.max(34, Math.min(input.scrollHeight, 174))}px`", page)
+        self.assertIn(".assistant-send { flex:0 0 30px;", page)
+        self.assertNotIn("position:absolute; right:7px; bottom:7px", page)
+        self.assertIn("button.setAttribute('aria-label', busy ? 'Stop response' : 'Send message')", page)
+
+    def test_bot_grid_empty_cells_use_page_background(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn(".bot-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:1px; background:var(--bg); }", page)
+
+    def test_provider_handlers_do_not_reference_removed_settings_status(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertNotIn("assistant-settings-status", page)
+
+    def test_top_actions_use_lucide_icons_for_redeploy_and_logout(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn('id="redeploy-btn" type="button"><span data-lucide="rotateCw"></span><span>Redeploy</span>', page)
+        self.assertIn('href="/logout" class="btn btn-delete"><span data-lucide="logOut"></span><span>Logout</span>', page)
+        self.assertIn("logOut:", page)
 
     def test_delete_file_explorer_entry_rejects_paths_outside_current_directory(self):
         current = self.root / "workspace"
@@ -255,6 +490,125 @@ class BotRegistryApiTests(unittest.TestCase):
         self.assertEqual(response.json["env"], {"BOT_TOKEN": "synthetic-bot-token"})
         self.assertNotIn("synthetic-private-token", response.get_data(as_text=True))
 
+    def test_server_secrets_environment_lists_requested_keys_when_unset(self):
+        expected_keys = {
+            "SERVER_USERNAME",
+            "SERVER_PASSWORD",
+            "HERMES_API_SERVER_KEY",
+            "HERMES_TELEGRAM_BOT_TOKEN",
+            "STATUS_BOT_TOKEN",
+            "OWNER_ID",
+            "API_KEY_9ROUTER",
+        }
+        with patch.dict(panel_app.os.environ, {"SERVER_USERNAME": "panel-user"}, clear=True):
+            response = self.client.get("/api/env/server-secrets")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(expected_keys.issubset(response.json["env"]))
+        self.assertEqual(set(response.json["env"]), expected_keys)
+        self.assertEqual(response.json["env"]["SERVER_USERNAME"], "panel-user")
+        self.assertEqual(response.json["env"]["SERVER_PASSWORD"], "")
+        self.assertEqual(response.json["count"], len(response.json["env"]))
+
+    def test_logs_endpoint_reads_the_three_named_service_logs(self):
+        service_logs = {
+            "panel": "Management Panel started\n",
+            "hermes": "Hermes Gateway ready\n",
+            "status-bot": "Status Bot polling\n",
+        }
+        log_paths = {}
+        for key, content in service_logs.items():
+            log_path = self.root / f"{key}.log"
+            log_path.write_text(content, encoding="utf-8")
+            log_paths[key] = str(log_path)
+
+        with patch.dict(panel_app.SERVICE_LOG_PATHS, log_paths):
+            for key, content in service_logs.items():
+                with self.subTest(service=key):
+                    response = self.client.get(f"/api/logs/{key}")
+
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json["logs"], content)
+                    self.assertEqual(response.json["total_lines"], 1)
+
+    def test_status_bot_worker_writes_to_its_dedicated_log(self):
+        log_path = self.root / "status-bot.log"
+        logger = panel_app.STATUS_BOT_LOGGER
+        original_handlers = set(logger.handlers)
+        try:
+            with (
+                patch.object(panel_app, "STATUS_BOT_LOG_PATH", str(log_path)),
+                patch.dict(panel_app.os.environ, {"STATUS_BOT_TOKEN": "", "OWNER_ID": ""}, clear=True),
+                patch.dict(panel_app.SERVICE_LOG_PATHS, {"status-bot": str(log_path)}),
+            ):
+                panel_app.telegram_poll_worker()
+                for handler in logger.handlers:
+                    handler.flush()
+                response = self.client.get("/api/logs/status-bot")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Telegram command listener skipped", response.json["logs"])
+        finally:
+            for handler in set(logger.handlers) - original_handlers:
+                logger.removeHandler(handler)
+                handler.close()
+
+    def test_status_bot_delivery_errors_are_logged_without_secrets(self):
+        log_path = self.root / "status-bot.log"
+        logger = panel_app.STATUS_BOT_LOGGER
+        original_handlers = set(logger.handlers)
+        token = "synthetic-status-bot-token"
+        try:
+            with (
+                patch.object(panel_app, "STATUS_BOT_LOG_PATH", str(log_path)),
+                patch.dict(
+                    panel_app.os.environ,
+                    {"STATUS_BOT_TOKEN": token, "OWNER_ID": "synthetic-owner-id"},
+                ),
+                patch.object(panel_app.urllib.request, "urlopen", side_effect=OSError("request failed")),
+            ):
+                panel_app.send_telegram_msg("Test status message")
+                for handler in logger.handlers:
+                    handler.flush()
+                log = log_path.read_text(encoding="utf-8")
+
+            self.assertIn("Telegram message delivery failed (OSError)", log)
+            self.assertNotIn(token, log)
+        finally:
+            for handler in set(logger.handlers) - original_handlers:
+                logger.removeHandler(handler)
+                handler.close()
+
+    def test_status_bot_delivery_targets_owner_id(self):
+        token = "synthetic-status-bot-token"
+        owner_id = "123456789"
+        requests = []
+
+        def capture_request(request, timeout):
+                requests.append(request)
+
+        with (
+                patch.dict(
+                    panel_app.os.environ,
+                    {"STATUS_BOT_TOKEN": token, "OWNER_ID": owner_id},
+                    clear=True,
+                ),
+                patch.object(panel_app.urllib.request, "urlopen", side_effect=capture_request),
+        ):
+                panel_app.send_telegram_msg("Test status message")
+
+        self.assertEqual(len(requests), 1)
+        self.assertIn("chat_id=123456789", requests[0].data.decode("utf-8"))
+
+    def test_logs_selector_starts_with_the_three_service_options(self):
+        response = self.client.get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertIn('<option value="panel">Management Panel</option>', page)
+        self.assertIn('<option value="hermes">Hermes Gateway</option>', page)
+        self.assertIn('<option value="status-bot">Status Bot</option>', page)
+        self.assertNotIn('<option value="server-secrets">Server Secrets</option>', page)
+
     def test_add_bot_route_starts_background_install(self):
         with patch.object(panel_app.threading.Thread, "start"):
             response = self.client.post(
@@ -343,7 +697,6 @@ class BotRegistryApiTests(unittest.TestCase):
 
     def test_update_bot_queues_stopped_update_using_saved_credentials(self):
         registry, definition = self.add_bot()
-        definition["enabled"] = True
         set_bot_credentials(
             registry,
             definition["id"],
@@ -352,17 +705,102 @@ class BotRegistryApiTests(unittest.TestCase):
         )
         save_registry(panel_app.BOT_REGISTRY_PATH, registry)
 
-        with patch.object(panel_app, "stop_bot_process", return_value=True), patch.object(panel_app.threading.Thread, "start"):
+        with patch.object(panel_app, "get_bot_proc", return_value=None), patch.object(panel_app, "stop_bot_process", return_value=True), patch.object(panel_app.threading.Thread, "start"):
             response = self.client.post(f"/api/bots/{definition['id']}/update")
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json["job"]["operation"], "update")
         self.assertFalse(response.json["job"]["definition"]["enabled"])
+        self.assertFalse(panel_app.BOT_INSTALL_PAYLOADS[response.json["job"]["id"]]["restart_after_update"])
         saved_payload = panel_app.BOT_INSTALL_PAYLOADS[response.json["job"]["id"]]
         self.assertEqual(saved_payload["pat"], "synthetic-private-token")
         self.assertEqual(saved_payload["environment"], {"BOT_TOKEN": "synthetic-bot-token"})
         self.assertNotIn("synthetic-private-token", response.get_data(as_text=True))
         self.assertFalse(panel_app.get_bot_registry()["bots"][0]["enabled"])
+
+    def test_update_bot_remembers_to_restart_bot_that_was_running(self):
+        registry, definition = self.add_bot()
+        definition["enabled"] = True
+        set_bot_credentials(
+            registry,
+            definition["id"],
+            {"pat": "", "environment": {}},
+            panel_app.BOT_CREDENTIALS_KEY,
+        )
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+
+        with patch.object(panel_app, "get_bot_proc", return_value=Mock()), patch.object(panel_app, "stop_bot_process", return_value=True), patch.object(panel_app.threading.Thread, "start"):
+            response = self.client.post(f"/api/bots/{definition['id']}/update")
+
+        self.assertEqual(response.status_code, 202)
+        payload = panel_app.BOT_INSTALL_PAYLOADS[response.json["job"]["id"]]
+        self.assertTrue(payload["restart_after_update"])
+        self.assertFalse(payload["definition"]["enabled"])
+        self.assertFalse(panel_app.get_bot_registry()["bots"][0]["enabled"])
+
+    def test_successful_update_keeps_previously_stopped_bot_stopped(self):
+        registry, definition = self.add_bot()
+        set_bot_credentials(registry, definition["id"], {"pat": "", "environment": {}}, panel_app.BOT_CREDENTIALS_KEY)
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+        with patch.object(panel_app, "get_bot_proc", return_value=None), patch.object(panel_app, "stop_bot_process", return_value=True), patch.object(panel_app.threading.Thread, "start"):
+            response = self.client.post(f"/api/bots/{definition['id']}/update")
+
+        job_id = response.json["job"]["id"]
+        payload = dict(panel_app.BOT_INSTALL_PAYLOADS[job_id])
+
+        def clone_to_staging(_job_id, _definition, _pat, repo_dir=None):
+            Path(repo_dir).mkdir(parents=True)
+
+        with patch.object(panel_app, "_clone_bot_repository", side_effect=clone_to_staging), patch.object(
+            panel_app, "_install_bot_dependencies"
+        ), patch.object(panel_app, "_validate_repo_entrypoint"), patch.object(panel_app, "start_bot_process") as start_bot:
+            panel_app._run_bot_update(
+                job_id,
+                payload["definition"],
+                payload["pat"],
+                payload["environment"],
+                payload["restart_after_update"],
+            )
+
+        start_bot.assert_not_called()
+        self.assertEqual(panel_app.BOT_INSTALL_JOBS[job_id]["status"], "success")
+        self.assertIn("remains stopped", panel_app.BOT_INSTALL_JOBS[job_id]["message"])
+        self.assertFalse(panel_app.get_bot_registry()["bots"][0]["enabled"])
+
+    def test_successful_update_restarts_previously_running_bot(self):
+        registry, definition = self.add_bot()
+        definition["enabled"] = True
+        set_bot_credentials(registry, definition["id"], {"pat": "", "environment": {}}, panel_app.BOT_CREDENTIALS_KEY)
+        save_registry(panel_app.BOT_REGISTRY_PATH, registry)
+        with patch.object(panel_app, "get_bot_proc", return_value=Mock()), patch.object(panel_app, "stop_bot_process", return_value=True), patch.object(panel_app.threading.Thread, "start"):
+            response = self.client.post(f"/api/bots/{definition['id']}/update")
+
+        job_id = response.json["job"]["id"]
+        payload = dict(panel_app.BOT_INSTALL_PAYLOADS[job_id])
+
+        def clone_to_staging(_job_id, _definition, _pat, repo_dir=None):
+            Path(repo_dir).mkdir(parents=True)
+
+        def start_and_enable(bot_id, _definition):
+            panel_app.set_bot_enabled(bot_id, True)
+            return 200, "Example Bot started"
+
+        with patch.object(panel_app, "_clone_bot_repository", side_effect=clone_to_staging), patch.object(
+            panel_app, "_install_bot_dependencies"
+        ), patch.object(panel_app, "_validate_repo_entrypoint"), patch.object(
+            panel_app, "start_bot_process", side_effect=start_and_enable
+        ) as start_bot:
+            panel_app._run_bot_update(
+                job_id,
+                payload["definition"],
+                payload["pat"],
+                payload["environment"],
+                payload["restart_after_update"],
+            )
+
+        start_bot.assert_called_once()
+        self.assertEqual(panel_app.BOT_INSTALL_JOBS[job_id]["status"], "success")
+        self.assertTrue(panel_app.get_bot_registry()["bots"][0]["enabled"])
 
     def test_start_bot_process_launches_bot_and_marks_it_enabled(self):
         registry, definition = self.add_bot()
@@ -411,22 +849,18 @@ class BotRegistryApiTests(unittest.TestCase):
             entrypoint.parent.mkdir(parents=True, exist_ok=True)
             entrypoint.write_text("new", encoding="utf-8")
 
-        def start_updated_bot(bot_key, _definition):
-            panel_app.set_bot_enabled(bot_key, True)
-            return 200, "Example Bot started"
-
         with (
             patch.object(panel_app, "_clone_bot_repository", side_effect=clone_to_staging),
             patch.object(panel_app, "_install_bot_dependencies"),
-            patch.object(panel_app, "start_bot_process", side_effect=start_updated_bot, create=True) as start_bot,
+            patch.object(panel_app, "start_bot_process", create=True) as start_bot,
         ):
             panel_app._run_bot_update(job_id, definition, "", {})
 
         self.assertFalse((current_dir / "old-version.txt").exists())
         self.assertEqual((current_dir / "src" / "bot.py").read_text(encoding="utf-8"), "new")
         self.assertEqual(panel_app.BOT_INSTALL_JOBS[job_id]["status"], "success")
-        start_bot.assert_called_once_with(definition["id"], definition)
-        self.assertTrue(panel_app.get_bot_registry()["bots"][0]["enabled"])
+        start_bot.assert_not_called()
+        self.assertFalse(panel_app.get_bot_registry()["bots"][0]["enabled"])
 
     def test_update_worker_preserves_existing_checkout_when_clone_fails(self):
         registry, definition = self.add_bot()

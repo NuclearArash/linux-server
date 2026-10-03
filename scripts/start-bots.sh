@@ -14,10 +14,10 @@ NINEROUTER_HOME_DIR="$HOME/.9router"
 
 notify_status_failure() {
     local MESSAGE="$1"
-    if [ -n "${STATUS_BOT_TOKEN:-}" ] && [ -n "${STATUS_CHAT_ID:-}" ]; then
+    if [ -n "${STATUS_BOT_TOKEN:-}" ] && [ -n "${OWNER_ID:-}" ]; then
         curl -sS --max-time 15 -X POST \
             "https://api.telegram.org/bot${STATUS_BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${STATUS_CHAT_ID}" \
+            --data-urlencode "chat_id=${OWNER_ID}" \
             --data-urlencode "text=${MESSAGE}" \
             --data-urlencode "parse_mode=HTML" >/dev/null 2>&1 || true
     fi
@@ -290,7 +290,7 @@ export SERVER_USERNAME="$SSH_USER"
 export SERVER_PASSWORD="$SSH_PASS"
 export GH_PAT="${GH_PAT:-}"
 export STATUS_BOT_TOKEN="${STATUS_BOT_TOKEN:-}"
-export STATUS_CHAT_ID="${STATUS_CHAT_ID:-}"
+export OWNER_ID="${OWNER_ID:-}"
 export GITHUB_REPO="${GITHUB_REPO:-ArashAtomic/linux-server}"
 export GITHUB_REF_NAME="${GITHUB_REF_NAME:-main}"
 export BOT_REGISTRY_PATH

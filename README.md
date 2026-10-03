@@ -1,134 +1,142 @@
-# Bot Server & Control Center
+# Linux Server
 
-Disposable GitHub Actions environment for running Telegram bots with a web-based GUI management panel, Cloudflare-hosted panel access, private SSH access through **Tailscale**, interactive Telegram bot commands, and 24/7 auto-renewing runner architecture.
+**A disposable, self-hosted bot server with a web control panel.** Run it from your own GitHub fork: GitHub Actions provisions an Ubuntu runner, starts your services, and replaces the runner on its scheduled cycle. Manage bots, logs, files, and Hermes from a browser; optionally connect by Tailscale SSH and Telegram.
 
-## Structure
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-```text
-repository/
-├── .github/
-│   └── workflows/
-│       └── server.yml
-│
-├── panel/
-│   ├── app.py
-│   └── templates/
-│       ├── index.html
-│       └── login.html
-│
-├── scripts/
-│   ├── setup.sh
-│   ├── start-bots.sh
-│   ├── heartbeat.sh
-│   └── stop-bots.sh
-│
-└── README.md
+If this project is useful to you, please ⭐ [star the repository](https://github.com/ArashAtomic/linux-server)—it helps others discover it.
+
+> **Know what you’re deploying:** this is an experimental GitHub Actions runner, not a permanent VPS or a guaranteed 24/7 hosting service. Runner replacement causes downtime; schedules, cancellations, cache restores, and external services can affect availability. The panel is published through a public Cloudflare Quick Tunnel URL. Use a strong password and don’t put sensitive production workloads here without independently reviewing and hardening the setup.
+
+## Get started
+
+### 1. Fork and enable Actions
+
+Fork this repository to your GitHub account or organization. In your fork, open **Settings → Actions → General** and make sure GitHub Actions are allowed. Keep the `server.yml` workflow on the branch you intend to run.
+
+### 2. Add repository secrets
+
+In your fork, go to **Settings → Secrets and variables → Actions → Repository secrets → New repository secret**. Add secrets by name, without quotes or placeholder text.
+
+**Required to start the server**
+
+| Secret | What it’s for |
+| --- | --- |
+| `SERVER_PASSWORD` | Strong, unique password for the panel, SSH account, and 9Router dashboard. Do not use the default. |
+| `HERMES_API_SERVER_KEY` | A strong random internal key used between the panel and Hermes; this is **not** an AI-provider key. |
+
+Generate a key locally with `openssl rand -hex 32`, then save the output as `HERMES_API_SERVER_KEY`.
+
+**Optional features (recommended when you plan to use them)**
+
+| Secret | What it enables |
+| --- | --- |
+| `SERVER_USERNAME` | SSH account name. Defaults to `admin`. You may instead add this as an Actions variable under the **Variables** tab. The panel login itself asks for the password only. |
+| `TAILSCALE_AUTHKEY` | Joins the runner to your tailnet for private SSH access. Configure this before relying on SSH. |
+| `GH_PAT` | Lets the panel and status bot request an immediate redeploy. Give it permission to dispatch workflows in this repository (for a classic token, use the required `repo` and `workflow` scopes). |
+| `STATUS_BOT_TOKEN` | Telegram bot token for startup notifications and server commands. Create a bot with [@BotFather](https://t.me/BotFather). |
+| `OWNER_ID` | Numeric Telegram user ID authorized to use the status bot and default allowed Hermes user. Set it with the Telegram bot token(s) you enable. |
+| `HERMES_TELEGRAM_BOT_TOKEN` | A **separate** Telegram bot token for Hermes chat. Do not reuse `STATUS_BOT_TOKEN`. Hermes uses `OWNER_ID` as its default allowed user if no separate allowlist is configured. |
+
+You can put `SERVER_USERNAME` in Repository secrets as well; the workflow checks Actions variables first, then secrets. The status bot and Hermes Telegram bot are optional, but each needs its own token and `OWNER_ID`. AI-provider credentials are added later in the panel.
+
+The startup notification lists each registered bot as running or stopped. Hermes Telegram does not send gateway shutdown/restart notices.
+
+If upgrading an existing fork, create the `OWNER_ID` repository secret before deploying; the workflow no longer reads the old chat-ID secret name.
+
+> **SSH safety:** SSH is intended to be reachable only over Tailscale. If Tailscale is missing or fails to connect, SSH may not be restricted to your tailnet. Don’t rely on SSH until you have verified the runner joined your tailnet and access is limited as intended.
+
+### 3. Start the server
+
+In your fork, open **Actions → Bot Server → Run workflow** and select the branch you want to deploy. The workflow also has a scheduled trigger; GitHub Actions must be enabled for the repository.
+
+When startup completes:
+
+- If configured, the status bot sends the panel URL and connection details to your Telegram chat.
+- The workflow log also reports startup progress and the discovered panel URL. Open the **Bot Server** run in Actions to view it.
+- The Cloudflare Quick Tunnel URL is temporary and can change when the runner is replaced. Sign in with `SERVER_PASSWORD`.
+
+If the workflow fails, open its run and inspect the failing step and uploaded logs. The runner must finish its setup before the panel becomes available.
+
+## Using the server
+
+### Web control panel
+
+The panel is the main interface. It provides server status, bot management, logs, environment-variable viewing, file browsing and previews, and Hermes Assistant. The panel login is password-only; use the `SERVER_PASSWORD` you configured.
+
+To add a bot, open the bot-management area and provide:
+
+1. Its GitHub repository URL.
+2. A branch or ref and the Python entry-point file.
+3. A GitHub personal access token only if the repository is private.
+4. Any bot-specific environment settings as `KEY=value` lines.
+
+The bot is cloned and installed on the runner. Its environment values are encrypted in the bot registry, but they are still sensitive data: only add bots and credentials you trust.
+
+### Hermes Assistant and 9Router
+
+In the Assistant panel, open **Providers**, choose an AI provider, enter its provider API key, fetch/select a model, and save. Hermes provider keys are separate from `HERMES_API_SERVER_KEY`; Hermes settings are restored from the Actions cache when available.
+
+9Router runs locally on the runner and is not exposed as a public website. Its dashboard is available through an SSH port forward when Tailscale SSH is working:
+
+```bash
+ssh -L 20129:127.0.0.1:20128 <SERVER_USERNAME>@<TAILSCALE_IP>
 ```
 
-## Features
+While connected, open `http://localhost:20129/dashboard`. The dashboard password is `SERVER_PASSWORD`. Configure an upstream provider in 9Router, then select **9Router (local)** in Hermes Providers. 9Router is optional; it is not required to use other Hermes providers.
 
-- **Public Bot Fleet**:
-  - The server starts with an empty bot registry and no default Telegram bots.
-  - Users can add their own bots by providing a GitHub repo URL, branch/ref, entry point, PAT for private repos, and environment variables in `KEY=value` format.
-  - Bot installs run in the background with a progress bar and become available in the panel only after the clone + install completes successfully.
-  - The registry and encrypted bot credentials are persisted across fresh runner replacements so the fleet survives a disposable VM redeploy.
-- **Web Control Panel (Cloudflare Tunnel)**:
-  - Real-time CPU & RAM metrics.
-  - Bot lifecycle management (Add, Start, Restart, Stop, Remove) from a dynamic fleet list.
-  - Password-protected with `SERVER_USERNAME` and `SERVER_PASSWORD`.
-  - One-click **🔄 Redeploy Server** button to trigger a fresh GitHub runner with the latest code.
-  - Live log streaming with search filter and pause/resume.
-  - Environment variables viewer with secret masking toggle.
-  - File Explorer for browsing directory contents and viewing source files.
-  - **Server Assistant** powered by Hermes Agent, with streamed chat, compact tool activity, Stop control, and curated command autocomplete.
-  - Provider setup from the authenticated panel; provider credentials are stored in Hermes state and restored on redeploy.
-- **9Router local AI gateway**:
-  - Runs privately on `127.0.0.1:20128` using the official `decolua/9router:latest` Docker image.
-  - Dashboard: `http://127.0.0.1:20128/dashboard` through SSH/local access.
-  - Dashboard password is aligned with `SERVER_PASSWORD`; no separate 9Router password is required.
-  - OpenAI-compatible API: `http://127.0.0.1:20128/v1`.
-  - Persistent database and configuration are stored in `~/.9router` and restored through the `9router-state-*` Actions cache.
-  - Select **9Router (local)** in Server Assistant → Providers, enter the 9Router API key from its dashboard, fetch models, choose one, and save.
-- **Private SSH Access (Tailscale)**:
-  - Exposes the VM's OpenSSH server on port 22 only through its Tailscale address.
-  - Requires Tailscale to be installed and logged into the same tailnet on the client:
-    ```bash
-    ssh <SERVER_USERNAME>@<tailscale-ip>
-    ```
-  - Prompts for your `SERVER_PASSWORD` in the terminal before granting shell access.
-- **Interactive Telegram Bot Commands**:
-  - On boot, sends the Web Panel URL and the SSH command to your Telegram status chat. The startup message's command includes a `-L 20129:127.0.0.1:20128` forward, so the loopback-only 9Router dashboard opens at `http://localhost:20129/dashboard` while that SSH session is connected. `/ssh` and the panel's SSH card still show the plain command.
-  - `🔄 /redeploy` or `/restart` - Trigger a fresh GitHub Actions workflow run and update the server instantly.
-  - `📊 /status` - Real-time CPU/RAM stats and bot health.
-  - `🌐 /panel` - Direct link to the Web Management Panel.
-  - `💻 /ssh` - The exact private Tailscale SSH command.
-- **Hermes Telegram Control**:
-  - Uses a separate bot token so the heartbeat bot and Hermes never compete for Telegram updates.
-  - Restricts access to `STATUS_CHAT_ID` and persists the update offset and chat sessions in Hermes state.
-  - Supports `/sessions`, `/resume`, `/new`, `/reset`, `/models`, `/model`, `/status`, and normal Hermes chat.
-  - Dangerous tool approvals, provider mutation, and advanced tool controls remain disabled until the installed Hermes control API is verified and the approval adapter is enabled.
-- **Continuous 24/7 Uptime**:
-  - 5-hour and 45-minute runner cycle with automated handoff triggering the next GitHub Actions workflow.
+### Telegram and SSH
 
-## Remote Access
+- The **status bot** is separate from Hermes and can report status, open the panel, show SSH connection details, or request a redeploy. Commands include `/status`, `/panel`, `/ssh`, `/redeploy`, `/help`, and `/start`.
+- The **Hermes bot** is Hermes’ own Telegram integration and uses its own token. It is optional and configured at startup.
+- For SSH, install and sign in to Tailscale on your device, ensure it is in the same tailnet, and use the command reported at startup (or `/ssh`). `SERVER_USERNAME` selects the SSH account.
 
-When the workflow boots:
-1. **Cloudflare Tunnel** publishes the Web Control Panel at a temporary `https://<random>.trycloudflare.com` URL.
-2. **Tailscale** connects the runner to your tailnet using `TAILSCALE_AUTHKEY` (hostname `bot-server`).
-3. **Tailscale** exposes SSH on port 22 through MagicDNS and binds `sshd` to the Tailscale address.
-4. The exact SSH command and Cloudflare Panel URL are sent to Telegram and printed in the workflow log.
+## Runtime and data
 
-> **Note**: MagicDNS must be enabled for the advertised `.ts.net` hostname. Tailscale ACLs still control which logged-in tailnet devices may connect.
+- Each run uses a fresh GitHub-hosted Ubuntu runner. The workflow is scheduled for 00:45, 05:45, 10:45, 15:45, and 20:45 UTC, and also attempts to start a replacement after a successful run. Runs share a cancel-in-progress group, so a scheduled or manual run can cancel the currently active runner. Expect downtime; neither continuous availability nor immediate replacement is guaranteed.
+- Bot registry data, Hermes state, and 9Router data are carried between runs using GitHub Actions caches. Caches are best-effort persistence, **not backups**; they may expire or fail to restore. Keep a separate backup of anything you cannot recreate.
+- The runner’s temporary files and logs do not behave like storage on a permanent server.
+- Actions caches and logs may contain sensitive service state. Limit repository access to people you trust, and don’t publish logs or cache contents.
 
-## GitHub Configuration
+## Troubleshooting
 
-### Variables (**Settings → Secrets and variables → Actions → Variables tab**)
+| Symptom | Check |
+| --- | --- |
+| Workflow stops during Hermes startup | Confirm `HERMES_API_SERVER_KEY` exists and is non-empty. |
+| Panel URL is missing | Check the workflow’s startup/tunnel steps and logs; Cloudflare Quick Tunnels are external and can fail. |
+| Redeploy action does not start a run | Check `GH_PAT` is present and has permission to dispatch workflows in this repository. |
+| Status bot sends nothing | Check both `STATUS_BOT_TOKEN` and numeric `OWNER_ID`, and verify the bot can message that user/chat. |
+| Hermes Telegram does not respond | Check `HERMES_TELEGRAM_BOT_TOKEN` and the allowed Telegram user ID; this token must differ from the status-bot token. |
+| SSH is unavailable | Verify `TAILSCALE_AUTHKEY`, the runner’s tailnet connection, and your client’s Tailscale login. Do not expose SSH publicly as a workaround. |
+| A bot or provider fails | Check its logs, repository/ref/entry point, environment values, provider credentials, and model access. Hermes health alone does not verify an AI provider key. |
 
-| Variable | Description | Default (if unset) |
-|---|---|---|
-| `SERVER_USERNAME` | Web Panel & SSH login username | `admin` |
-
-### Secrets (**Settings → Secrets and variables → Actions → Secrets tab**)
-
-| Secret | Description | Default (if unset) |
-|---|---|---|
-| `SERVER_PASSWORD` | Web Panel & SSH login password | `admin` |
-| `TAILSCALE_AUTHKEY` | Tailscale auth key used to join the runner to your tailnet | None |
-| `GH_PAT` | Personal Access Token used to trigger workflow redeploys | None |
-| `STATUS_BOT_TOKEN` | Telegram bot token for status notifications & commands | None |
-| `STATUS_CHAT_ID` | Telegram chat ID for notifications & commands | None |
-| `HERMES_TELEGRAM_BOT_TOKEN` | Separate Telegram bot token used by the Hermes bridge | Required for Hermes Telegram control |
-| `HERMES_API_SERVER_KEY` | Strong bearer key used internally between the panel and Hermes | Required |
-
-User-added bots can optionally provide a GitHub PAT for private repos and a `.env` block in `KEY=value` format through the web panel. Those values are stored encrypted and persisted with the bot registry across redeploys.
-
-### Hermes Provider Setup
-
-Provider API keys are intentionally **not required during workflow setup**. After the server is online:
-
-1. Open the Web Control Panel and select **Server Assistant**.
-2. Open **Providers**.
-3. Choose a provider, enter its API key or token, and select **Save & Restart Hermes**.
-
-The value is written to the runner's `~/.hermes/.env` with restricted permissions. Hermes state, including configured providers, is saved to and restored from the `hermes-state-*` Actions cache during runner replacement. The API key used by the panel itself remains the separate `HERMES_API_SERVER_KEY` GitHub secret.
-
-Supported provider entries currently include OpenRouter, OpenAI, Anthropic, Google Gemini, xAI, DeepSeek, Groq, GitHub Copilot, and the Hermes Telegram bot token.
-
-The Hermes Telegram bridge token is a transport credential, not an AI provider credential. Create a separate Telegram bot with BotFather and store its token as `HERMES_TELEGRAM_BOT_TOKEN`. Do not reuse `STATUS_BOT_TOKEN`. The bridge currently accepts messages only from `STATUS_CHAT_ID`; other chats are ignored.
-
-Hermes Telegram provider commands currently include:
+## Project layout
 
 ```text
-/provider
-/provider set custom https://api.example.com/v1 model-id API_KEY
-/models https://api.example.com/v1 API_KEY
-/model model-id
+.github/workflows/server.yml   GitHub Actions deployment and lifecycle
+scripts/                        Runner setup, startup, heartbeat, and shutdown
+panel/app.py                    Flask API and process controls
+panel/templates/                Web control panel and login
+panel/run_hermes_gateway.sh      Hermes gateway supervisor
+hermes/SOUL.md                  Hermes operator context
 ```
 
-Credential-bearing messages are deleted on a best-effort basis after processing. Using the authenticated web panel is preferred for long-lived provider keys. A provider HTTP 401 means the upstream endpoint rejected the provider credential; verify the exact base URL, required authentication format, account/model access, and that the key was saved under the provider selected in Hermes. `HERMES_API_SERVER_KEY` is unrelated to upstream provider authentication.
+## Contributing
 
-9Router is a local OpenAI-compatible gateway rather than an Hermes provider credential. Configure its upstream providers and API key from the 9Router dashboard, then use the **9Router (local)** provider in the Hermes panel.
+Issues and pull requests are welcome. Keep secrets out of commits and logs, and test changes without dispatching a workflow or modifying a live runner unless you explicitly intend to deploy.
 
-## Starting
+## Credits
 
-Go to: **GitHub → Actions → Bot Server → Run workflow**
+This project builds on the work of these projects and their contributors:
+
+| Project | Use |
+| --- | --- |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | Assistant and Telegram gateway (MIT). |
+| [9Router](https://github.com/decolua/9router) | Optional local AI gateway, run from the upstream Docker image. Its repository does not currently show a root-level license file; review upstream terms before redistributing it. |
+| [cloudflared](https://github.com/cloudflare/cloudflared) and [Tailscale](https://github.com/tailscale/tailscale) | Panel tunnel and private-network connectivity tools. |
+
+These projects are independently maintained; their respective licenses and terms apply. This list highlights directly used tools and is not a complete inventory of their transitive dependencies or the GitHub-hosted runner's preinstalled software.
+
+## License
+
+This project is licensed under the [MIT License](./LICENSE), copyright © 2026 ArashAtomic. If you copy or redistribute this project, or substantial portions of it, include the copyright and permission notice from `LICENSE`. Keeping that notice is the MIT attribution requirement; a separate visible credit in every use is not required by MIT.

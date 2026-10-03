@@ -26,6 +26,7 @@
   --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --sidebar: 232px;
+  --assistant-bottom-rail:64px;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
@@ -44,7 +45,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-right:1px solid var(--line); background:#0d1113; padding:22px 14px 16px;
 }
 .rail-brand { display:flex; align-items:center; gap:11px; padding:4px 8px 24px; }
-.brand-mark { width:32px; height:32px; border:1px solid #3a5055; display:grid; place-items:center; border-radius:7px; color:var(--accent); background:#101719; font-size:15px; }
+.brand-mark { width:32px; height:32px; border:1px solid #3a5055; display:grid; place-items:center; border-radius:7px; color:var(--accent); background:#101719; }
+.lucide-icon { display:block; width:14px; height:14px; flex:0 0 auto; }
+.brand-mark .lucide-icon { width:17px; height:17px; }
 .brand-title { font-size:13px; font-weight:720; letter-spacing:.01em; }
 .brand-subtitle { margin-top:3px; color:var(--text-3); font-size:10px; font-family:var(--mono); }
 .rail-label { padding:10px 9px 4px; color:#59676b; font-size:9px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; }
@@ -57,12 +60,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .tab-btn.active { border-color:#29383d; background:#172023; color:#eef5f4; }
 .tab-icon { width:17px; color:#6e7e82; text-align:center; font-family:var(--mono); font-size:11px; }
 .tab-btn.active .tab-icon { color:var(--accent); }
+.tab-span { text-align:center; font-family:var(--mono); font-size:11px; }
 .rail-spacer { flex:1; }
 .host-mini { border-top:1px solid var(--line); padding:15px 8px 2px; }
 .host-mini-label { color:#59676b; font-size:9px; letter-spacing:.14em; text-transform:uppercase; }
 .host-mini-name { margin-top:7px; font-family:var(--mono); font-size:11px; color:#d6dddd; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .host-mini-status { display:flex; align-items:center; gap:7px; margin-top:7px; color:var(--text-3); font-size:10px; }
-.dot { width:6px; height:6px; border-radius:50%; background:var(--good); box-shadow:0 0 0 3px rgba(120,201,157,.08); }
+.dot { width:6px; height:6px; border-radius:50%; background:var(--text-3); }
 
 .main { min-width:0; padding:0 34px 44px; }
 .topbar { height:72px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); gap:18px; }
@@ -71,8 +75,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .crumb-meta { color:var(--text-3); font-family:var(--mono); font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .top-actions { display:flex; align-items:center; gap:8px; }
 .connection { display:flex; align-items:center; gap:8px; padding:0 10px; height:31px; border-left:1px solid var(--line); color:#9ba7a8; font-size:10px; font-family:var(--mono); }
-.connection .dot { background:var(--good); }
-.connection.offline .dot { background:var(--bad); box-shadow:0 0 0 3px rgba(223,127,123,.08); }
+.connection .dot, .host-mini-status .dot { background:var(--status-color,#7a8688); box-shadow:0 0 0 2px var(--status-glow,rgba(122,134,136,.12)); animation:status-pulse 1.8s ease-in-out infinite; }
+.connection[data-state=connected], .host-mini-status[data-state=connected], .status-indicator[data-state=connected] { --status-color:var(--good); --status-glow:rgba(120,201,157,.2); }
+.connection[data-state=busy], .host-mini-status[data-state=busy], .status-indicator[data-state=busy], .status-indicator[data-state=paused] { --status-color:var(--warn); --status-glow:rgba(225,181,107,.22); }
+.connection[data-state=error], .host-mini-status[data-state=error], .status-indicator[data-state=error] { --status-color:var(--bad); --status-glow:rgba(223,127,123,.22); }
+@keyframes status-pulse {
+  0%,100% { opacity:.78; box-shadow:0 0 0 2px var(--status-glow); }
+  50% { opacity:1; box-shadow:0 0 0 5px var(--status-glow),0 0 10px var(--status-color); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .connection .dot, .host-mini-status .dot, .status-indicator .log-state-dot, .status-indicator .model-status-dot { animation:none; }
+  .assistant-settings-panel { transition:none !important; transform:none; }
+}
 
 .content { padding-top:30px; }
 .hero { display:flex; justify-content:space-between; align-items:flex-end; gap:24px; margin-bottom:25px; }
@@ -132,12 +146,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .section-header { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:12px; }
 .section-title { font-size:17px; font-weight:650; letter-spacing:-.02em; }
 .section-description { margin-top:4px; color:#667477; font-size:11px; }
-.bot-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); }
+.bot-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:1px; background:var(--bg); }
 .bot-card { background:var(--surface); padding:17px; min-width:0; }
 .bot-header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
 .bot-identity { display:flex; gap:11px; align-items:center; min-width:0; }
-.bot-icon { width:34px; height:34px; display:grid; place-items:center; border:1px solid #334047; border-radius:7px; background:#101619; font-size:17px; }
-.bot-icon-button { appearance:none; padding:0; color:var(--text); font-family:var(--sans); font-size:17px; line-height:1; cursor:pointer; }
+.bot-icon { width:34px; height:34px; display:grid; place-items:center; border:1px solid #334047; border-radius:7px; background:#101619; }
+.bot-icon { font-size:19px; line-height:1; }
+.bot-icon-button { appearance:none; padding:0; color:var(--text); cursor:pointer; }
 .bot-icon-button:hover { border-color:#4a5d62; background:#162024; }
 .bot-name { font-weight:650; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .bot-id { margin-top:3px; color:#647174; font-family:var(--mono); font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -154,20 +169,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .bot-actions { display:grid; grid-template-columns:repeat(3,1fr); gap:5px; }
 .bot-actions .btn { justify-content:center; }
 .bot-actions .btn-management { grid-column:auto; }
-.bot-actions .btn-delete-bot { color:#b98280; }
+.bot-actions .btn-stop { color:#b98280; }
 
 /* Forms */
-.btn { min-height:31px; padding:6px 10px; display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid #344148; border-radius:5px; background:#151b1e; color:#aeb9ba; cursor:pointer; text-decoration:none; font-size:10px; font-weight:650; transition:background .15s,border-color .15s,color .15s,transform .15s; }
+.btn { min-height:32px; padding:6px 10px; display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid #344148; border-radius:5px; background:#151b1e; color:#aeb9ba; cursor:pointer; text-decoration:none; font-size:10px; font-weight:650; transition:background .15s,border-color .15s,color .15s,transform .15s; }
 .btn:hover:not(:disabled) { background:#1b2327; border-color:#4a5a60; color:#eef3f2; }
 .btn:active:not(:disabled) { transform:translateY(1px); }
 .btn:disabled { opacity:.45; cursor:not-allowed; }
 .btn-primary, .btn-start { border-color:#365c58; background:#162522; color:#92d5ba; }
 .btn-restart { border-color:#5a4d31; background:#211d15; color:#d9b46c; }
-.btn-stop { border-color:#5b3838; background:#241718; color:#dc9995; }
+.btn-delete { border-color:#5b3838; background:#241718; color:#dc9995; }
 .btn-pause { color:#d5d7d3; }
 .btn-grow { flex:1; }
 .btn-compact { min-height:27px; padding:4px 8px; }
 .field { width:100%; min-height:33px; border:1px solid #303b40; border-radius:5px; background:#0f1417; color:#dce3e2; padding:7px 9px; }
+.env-field { resize:vertical; }
 .field::placeholder { color:#526064; }
 .field:hover { border-color:#3d4c52; }
 .field-label { color:#687679; font-size:9px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
@@ -182,6 +198,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .combo-control, .model-combo { position:relative; }
 .combo-toggle, .model-combo-toggle { position:absolute; right:5px; top:50%; transform:translateY(-50%); border:0; background:transparent; color:#728084; cursor:pointer; }
 .combo-options, .model-combo-list { position:absolute; z-index:30; left:0; right:0; top:calc(100% + 4px); max-height:220px; overflow:auto; border:1px solid #3a474c; background:#11171a; box-shadow:0 18px 45px rgba(0,0,0,.42); padding:4px; }
+.combo-options { top:auto; bottom:calc(100% + 4px); }
 .combo-option { width:100%; border:0; background:transparent; color:#b8c2c3; text-align:left; padding:7px 8px; cursor:pointer; border-radius:3px; font-family:var(--mono); font-size:10px; }
 .combo-option:hover, .combo-option[aria-selected=true] { background:#1b272b; color:#eff4f3; }
 .inline-actions { grid-column:1/-1; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -203,17 +220,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .install-job-card .progress>div { height:100%; background:var(--accent); }
 
 /* Console workspace */
-.console { margin-top:36px; border:1px solid var(--line); background:var(--surface); }
+.console { margin-top:8px; border:1px solid var(--line); background:var(--surface); }
 .console-header { min-height:56px; display:flex; align-items:center; justify-content:space-between; gap:15px; padding:0 14px; border-bottom:1px solid var(--line); }
 .console-tabs { display:flex; gap:2px; overflow:auto; }
 .console-tabs .tab-btn { width:auto; min-height:34px; padding:0 10px; border-radius:4px; white-space:nowrap; }
 .console-right { width:190px; flex:0 0 190px; }
 .console-toolbar { min-height:48px; display:flex; align-items:center; gap:9px; padding:8px 12px; border-bottom:1px solid var(--line); }
 .console-toolbar .log-search { margin-left:auto; width:min(270px,40vw); }
+.env-visibility-toggle { min-height:32px; display:inline-flex; align-items:center; gap:9px; padding:0; border:0; background:transparent; color:#aeb9ba; cursor:pointer; font-size:10px; font-weight:600; }
+.env-visibility-toggle:hover { color:#edf2f1; }
+.env-visibility-toggle:focus-visible { outline:1px solid var(--accent); outline-offset:2px; }
+.env-switch-track { width:30px; height:17px; display:flex; align-items:center; padding:2px; border:1px solid #465256; border-radius:10px; background:#222b2f; transition:background .16s,border-color .16s; }
+.env-switch-thumb { width:11px; height:11px; border-radius:50%; background:#a9b5b6; transform:translateX(0); transition:transform .16s,background .16s; }
+.env-visibility-toggle[aria-checked=true] .env-switch-track { border-color:#47756d; background:#24443e; }
+.env-visibility-toggle[aria-checked=true] .env-switch-thumb { background:#9be0c3; transform:translateX(13px); }
+.env-visibility-toggle[aria-checked=false] .env-switch-thumb { background:#c4cece; }
+#env-count { margin-left:auto; }
 .log-state { display:flex; align-items:center; gap:6px; color:#738083; font-family:var(--mono); font-size:9px; }
-.log-state-dot, .model-status-dot { width:6px; height:6px; border-radius:50%; background:#7a8688; }
-.log-state[data-state=live] .log-state-dot, .model-status[data-state=ready] .model-status-dot { background:var(--good); }
-.log-state[data-state=error] .log-state-dot, .model-status[data-state=offline] .model-status-dot { background:var(--bad); }
+.log-state-dot, .model-status-dot { width:6px; height:6px; border-radius:50%; background:var(--status-color,#7a8688); box-shadow:0 0 0 2px var(--status-glow,rgba(122,134,136,.12)); animation:status-pulse 1.8s ease-in-out infinite; }
 .console-body { min-height:270px; }
 .logs-box { min-height:270px; max-height:460px; overflow:auto; padding:15px; background:#0a0e10; color:#9da9aa; font-family:var(--mono); font-size:10px; line-height:1.65; white-space:pre-wrap; overflow-wrap:anywhere; }
 .env-table-wrapper { overflow:auto; }
@@ -228,39 +252,79 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .file-item:hover { background:#151d20; }
 .file-item-main { display:flex; align-items:center; gap:9px; min-width:0; }
 .file-icon { width:17px; color:#708084; }
+.file-icon .lucide-icon { width:16px; height:16px; }
+.file-item-labels { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.file-search-wrap { position:relative; flex:1; min-width:160px; }
+.file-search-wrap .field { width:100%; padding-left:32px; }
+.file-search-icon { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:#728084; pointer-events:none; }
 .file-item-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#bac4c5; font-family:var(--mono); font-size:10px; }
+.file-item-path { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#718083; font-family:var(--mono); font-size:9px; }
 .file-item-end { display:flex; align-items:center; gap:10px; }
 .file-delete-btn { border:0; background:transparent; color:#657275; cursor:pointer; padding:4px; }
 .file-delete-btn:hover { color:#d98c87; }
 .file-empty { padding:30px; text-align:center; color:#59676a; font-family:var(--mono); font-size:9px; }
-.file-preview { min-height:160px; max-height:500px; border-top:1px solid var(--line); }
+.file-preview { min-height:160px; max-height:500px; display:flex; flex-direction:column; overflow:hidden; border-top:1px solid var(--line); background:#0a0e10; color:#9da9aa; font-family:var(--mono); font-size:10px; line-height:1.65; tab-size:4; }
+.file-preview-tabs { min-height:35px; display:flex; align-items:stretch; overflow-x:auto; overflow-y:hidden; border-bottom:1px solid #202a2e; background:#0f1417; }
+.file-preview-tab-item { max-width:min(260px,70vw); min-width:0; display:flex; flex:0 1 auto; align-items:stretch; border-right:1px solid #202a2e; }
+.file-preview-tab { min-width:0; display:inline-flex; flex:1 1 auto; align-items:center; gap:8px; padding:0 10px 0 12px; border:0; border-bottom:1px solid transparent; background:transparent; color:#829092; cursor:pointer; font:inherit; }
+.file-preview-tab:hover { background:#141b1e; color:#c3cece; }
+.file-preview-tab[aria-selected=true] { border-bottom-color:var(--accent); background:#141b1e; color:#c3cece; }
+.file-preview-tab:focus-visible,.file-preview-close:focus-visible { position:relative; z-index:2; outline:1px solid var(--accent); outline-offset:-2px; }
+.file-preview-tab .lucide-icon { flex:0 0 auto; color:#7b8b8e; }
+.file-preview-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.file-preview-close { width:28px; flex:0 0 28px; display:grid; place-items:center; border:0; border-bottom:1px solid transparent; background:transparent; color:#687679; cursor:pointer; }
+.file-preview-close:hover { background:#21191a; color:var(--bad); }
+.file-preview-tab-item.is-active .file-preview-close { border-bottom-color:var(--accent); background:#141b1e; }
+.file-preview-body { min-height:124px; display:flex; flex:1 1 auto; overflow:auto; }
+.file-preview-lines,.file-preview-content { flex:0 0 auto; min-height:124px; margin:0; padding:15px 0; font:inherit; line-height:inherit; }
+.file-preview-lines { position:sticky; left:0; z-index:1; min-width:42px; padding-right:10px; padding-left:15px; border-right:1px solid #202a2e; background:#0a0e10; color:#566468; text-align:right; user-select:none; }
+.file-preview-content { padding-right:15px; padding-left:12px; color:inherit; white-space:pre; }
 
 /* Assistant */
-.assistant-chat { min-height:620px; display:grid; grid-template-columns:220px minmax(0,1fr); position:relative; }
+.assistant-chat { min-height:620px; display:grid; grid-template-columns:220px minmax(0,1fr); position:relative; transition:grid-template-columns .2s ease; }
+.assistant-chat.sidebar-collapsed { grid-template-columns:52px minmax(0,1fr); }
 .assistant-sidebar { background:#0f1417; border-right:1px solid var(--line); display:flex; flex-direction:column; min-width:0; }
+.assistant-sidebar.collapsed .assistant-sidebar-title,
+.assistant-sidebar.collapsed .assistant-session-list,
+.assistant-sidebar.collapsed .assistant-sidebar-divider,
+.assistant-sidebar.collapsed .assistant-settings-panel,
+.assistant-sidebar.collapsed .assistant-new-chat,
+.assistant-sidebar.collapsed .assistant-sidebar-footer .btn { display:none; }
 .assistant-sidebar-header { height:52px; display:flex; align-items:center; justify-content:space-between; padding:0 10px; border-bottom:1px solid var(--line); }
+.assistant-sidebar.collapsed .assistant-sidebar-header { justify-content:center; padding:11px 4px; }
 .assistant-sidebar-title { color:#aeb9ba; font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
 .assistant-sidebar-actions { display:flex; gap:4px; }
-.assistant-sidebar-toggle { width:28px;height:28px;border:1px solid #303b40;border-radius:4px;background:#141a1d;color:#869295;cursor:pointer; }
+.assistant-sidebar-toggle { width:28px;height:28px;display:grid;place-items:center;border:1px solid #303b40;border-radius:4px;background:#141a1d;color:#869295;cursor:pointer; }
 .assistant-session-list { flex:1; overflow:auto; padding:8px; }
 .assistant-session-item { display:flex; align-items:center; gap:7px; min-height:34px; padding:0 7px; border:1px solid transparent; border-radius:4px; color:#899597; cursor:pointer; }
 .assistant-session-item:hover { background:#151c1f; color:#cbd3d3; }
 .assistant-session-item.active { background:#172125; border-color:#2b3b40; color:#e1e8e7; }
 .session-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; font-size:10px; }
-.session-actions { display:flex; gap:1px; }
+.session-actions { display:flex; gap:1px; opacity:0; visibility:hidden; transition:opacity .16s ease, visibility 0s linear .16s; }
+.assistant-session-item:hover .session-actions,
+.assistant-session-item:focus-within .session-actions { opacity:1; visibility:visible; transition-delay:0s; }
 .session-action { border:0; background:transparent; color:#647174; cursor:pointer; padding:3px; }
 .session-action:hover { color:#d5dddd; }
 .session-action.danger:hover { color:#d88b87; }
+@media (hover:none) {
+  .session-actions { opacity:1; visibility:visible; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-actions { transition:none; }
+}
 .assistant-session-empty { padding:15px 7px; color:#566468; font-size:10px; }
 .assistant-sidebar-divider { border-top:1px solid var(--line); }
-.assistant-settings-panel { padding:11px; display:none; border-bottom:1px solid var(--line); }
-.assistant-sidebar.settings-open .assistant-settings-panel { display:block; }
+.assistant-settings-panel { max-height:0; padding:0 11px; border-bottom:1px solid transparent; opacity:0; transform:translateY(-6px); visibility:hidden; overflow:hidden; transition:max-height .28s ease, padding .28s ease, opacity .18s ease, transform .18s ease, border-color .28s ease, visibility 0s linear .28s; }
+.assistant-sidebar.settings-open .assistant-settings-panel { max-height:480px; padding:11px; border-bottom-color:var(--line); opacity:1; transform:translateY(0); visibility:visible; transition:max-height .28s ease, padding .28s ease, opacity .2s ease .04s, transform .2s ease .04s, border-color .28s ease, visibility 0s; }
 .assistant-settings-title { color:#718083; font-size:9px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; margin-bottom:9px; }
 .assistant-settings-row { display:flex; gap:5px; margin-bottom:6px; }
 .assistant-settings-actions { display:flex; gap:5px; margin-top:7px; }
-.assistant-settings-status { min-height:16px; margin-top:6px; color:#697679; font-size:9px; }
-.assistant-sidebar-footer { padding:10px; border-top:1px solid var(--line); }
+.assistant-sidebar-footer { margin-top:auto; flex:0 0 var(--assistant-bottom-rail); display:flex; align-items:center; padding:10px; border-top:1px solid var(--line); }
 .assistant-rail-btn { display:none; }
+.assistant-sidebar.collapsed .assistant-sidebar-footer { justify-content:center; padding:8px 4px; }
+.assistant-sidebar.collapsed .assistant-rail-btn { width:28px; height:28px; display:grid; place-items:center; border:1px solid #303b40; border-radius:4px; background:#141a1d; color:#869295; cursor:pointer; }
+.assistant-sidebar.collapsed .assistant-rail-btn:hover { border-color:#476066; background:#182124; color:#c5d1d1; }
+.assistant-sidebar.collapsed .assistant-rail-btn .lucide-icon { width:16px; height:16px; }
 .assistant-main { min-width:0; display:flex; flex-direction:column; background:#0b1012; }
 .assistant-model-strip { min-height:52px; display:flex; align-items:center; gap:9px; padding:0 13px; border-bottom:1px solid var(--line); }
 .assistant-model-label { color:#647174; font-size:9px; text-transform:uppercase; letter-spacing:.1em; }
@@ -273,9 +337,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .assistant-message.assistant { background:#101619; }
 .assistant-message-action { opacity:0; visibility:hidden; pointer-events:none; border:0; background:transparent; color:#687679; font-size:9px; cursor:pointer; padding:4px 2px; }
 .assistant-message-group:hover .assistant-message-action,.assistant-message-group:focus-within .assistant-message-action { opacity:1; visibility:visible; pointer-events:auto; }
-.assistant-composer { display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line); }
-.assistant-input { min-height:43px; resize:vertical; }
-.assistant-send { min-width:74px; }
+.assistant-composer { min-height:var(--assistant-bottom-rail); max-height:200px; flex:0 0 auto; display:flex; align-items:center; padding:8px 12px; border-top:0; }
+.assistant-input-wrap { flex:1; min-width:0; max-height:184px; display:flex; align-items:center; gap:6px; padding:4px 6px 4px 0; border:1px solid #303b40; border-radius:5px; background:#0f1417; }
+.assistant-input-wrap:focus-within { border-color:#3d4c52; }
+.assistant-input { flex:1; width:0; min-width:0; height:34px; min-height:34px; max-height:174px; padding:4px 9px; border:0; border-radius:0; background:transparent; line-height:18px; resize:none; overflow-y:auto; }
+.assistant-send { flex:0 0 30px; width:30px; min-width:30px; height:30px; padding:0; }
+.assistant-send.is-busy { width:auto; min-width:58px; padding:0 8px; }
+.assistant-send .lucide-icon { width:16px; height:16px; }
 .assistant-activity { padding:0 13px 6px; color:#586568; font-family:var(--mono); font-size:9px; }
 .assistant-drawer-toggle { display:none; }
 .assistant-sidebar-backdrop { display:none; }
@@ -302,8 +370,38 @@ dialog::backdrop { background:rgba(4,7,8,.72); }
 .bot-icon-dialog-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:15px; }
 .bot-delete-dialog { width:min(420px,calc(100vw - 32px)); padding:20px; }
 .bot-delete-dialog h2 { margin:0 0 8px; font-size:15px; }
-.bot-delete-dialog p { margin:0 0 16px; color:#8e9a9c; font-size:11px; line-height:1.5; }
+.bot-delete-dialog-heading { display:flex; align-items:center; gap:11px; margin-bottom:14px; }
+.bot-delete-dialog-icon { width:36px; height:36px; flex:0 0 36px; display:grid; place-items:center; border:1px solid #5b3838; border-radius:6px; background:#241718; color:#dc9995; }
+.bot-delete-dialog-icon .lucide-icon { width:20px; height:20px; }
+.bot-delete-dialog-kicker { margin:0 0 4px; color:#cf8984; font-family:var(--mono); font-size:8px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+.bot-delete-description { margin:0 0 9px; color:#b5c0c0; font-size:12px; line-height:1.55; }
+.bot-delete-warning { margin:0 0 18px; color:#d9a5a2; font-size:10px; line-height:1.4; }
 .bot-delete-dialog-actions { display:flex; justify-content:flex-end; gap:7px; }
+.btn-delete-bot { min-height:36px; border-color:#a54843; background:#a83f3b; color:#fff1ef; font-weight:700; }
+.btn-delete-bot:hover:not(:disabled) { border-color:#c65a53; background:#bd4842; color:#fff; }
+.btn-delete-bot:disabled { cursor:wait; opacity:.65; }
+.bot-update-dialog { width:min(420px,calc(100vw - 32px)); padding:20px; }
+.bot-update-dialog-heading { display:flex; align-items:center; gap:11px; margin-bottom:14px; }
+.bot-update-dialog-icon { width:36px; height:36px; flex:0 0 36px; display:grid; place-items:center; border:1px solid #365c58; border-radius:6px; background:#162522; color:#92d5ba; }
+.bot-update-dialog-icon .lucide-icon { width:20px; height:20px; }
+.bot-update-dialog-kicker { margin:0 0 4px; color:#92d5ba; font-family:var(--mono); font-size:8px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+.bot-update-dialog h2 { margin:0 0 8px; font-size:15px; }
+.bot-update-description { margin:0 0 9px; color:#b5c0c0; font-size:12px; line-height:1.55; }
+.bot-update-state { margin:0 0 18px; padding:9px 10px; border-left:2px solid var(--accent); background:#141e20; color:#a7cbca; font-size:11px; line-height:1.45; }
+.bot-update-dialog-actions { display:flex; justify-content:flex-end; gap:7px; }
+.btn-update-bot { min-height:36px; border-color:#47756d; background:#24443e; color:#c4f0dd; font-weight:700; }
+.btn-update-bot:hover:not(:disabled) { border-color:#5a9a89; background:#2c554c; color:#e5fff3; }
+.btn-update-bot:disabled { cursor:wait; opacity:.65; }
+.file-delete-dialog { width:min(440px,calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; padding:22px; }
+.file-delete-kicker { margin:0 0 8px; color:var(--bad); font-family:var(--mono); font-size:9px; font-weight:700; letter-spacing:.12em; }
+.file-delete-dialog h2 { margin:0 0 12px; font-size:16px; }
+.file-delete-description { margin:0 0 12px; color:var(--text-2); font-size:12px; line-height:1.55; overflow-wrap:anywhere; }
+.file-delete-description code { padding:2px 5px; border:1px solid #303b40; border-radius:3px; background:#0c1113; color:var(--text); font-family:var(--mono); font-size:11px; }
+.file-delete-warning { margin:0; padding:9px 10px; border-left:2px solid var(--bad); background:#201719; color:#d9a5a2; font-size:11px; line-height:1.45; }
+.file-delete-dialog-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+.file-delete-confirm { border-color:#70413f; background:#291918; color:#efaaa4; }
+.file-delete-confirm:hover:not(:disabled) { border-color:#a65852; background:#351d1c; color:#ffd0cb; }
+.file-delete-confirm:disabled { cursor:wait; opacity:.65; }
 
 @keyframes job-expiry { from { stroke-dashoffset:0; } to { stroke-dashoffset:50.27; } }
 
@@ -333,7 +431,7 @@ dialog::backdrop { background:rgba(4,7,8,.72); }
   .console-right { width:100%; flex-basis:auto; }
   .console-toolbar { flex-wrap:wrap; }
   .console-toolbar .log-search { margin-left:0; width:100%; order:5; }
-  .assistant-chat { grid-template-columns:1fr; }
+    .assistant-chat, .assistant-chat.sidebar-collapsed { grid-template-columns:1fr; }
   .assistant-sidebar { position:absolute; inset:0 auto 0 0; width:min(86%,320px); z-index:20; transform:translateX(-105%); transition:transform .2s ease; box-shadow:20px 0 50px rgba(0,0,0,.4); }
   .assistant-chat.drawer-open .assistant-sidebar { transform:translateX(0); }
   .assistant-chat.drawer-open .assistant-sidebar-backdrop { display:block; position:absolute; inset:0; z-index:19; background:rgba(0,0,0,.5); }
@@ -359,29 +457,29 @@ dialog::backdrop { background:rgba(4,7,8,.72); }
 <div class="app">
   <aside class="rail">
     <div class="rail-brand">
-      <div class="brand-mark">⌁</div>
+      <div class="brand-mark" aria-hidden="true"><span data-lucide="server" data-icon-size="17"></span></div>
       <div>
         <div class="brand-title">Server Control</div>
         <div class="brand-subtitle">github-runner</div>
       </div>
     </div>
-        <div class="rail-label">Monitoring</div>
+    <div class="rail-label">Monitoring</div>
         <nav class="nav" aria-label="Monitoring">
-        <button class="tab-btn" id="metrics-nav-btn" type="button"><span class="tab-icon">01</span><span>Metrics</span></button>
-        <button class="tab-btn" id="bot-fleet-nav-btn" type="button"><span class="tab-icon">02</span><span>Bot Fleet</span></button>
+            <button class="tab-btn" id="metrics-nav-btn" type="button"><span class="tab-icon">01</span><span class="tab-span">Metrics</span></button>
+            <button class="tab-btn" id="bot-fleet-nav-btn" type="button"><span class="tab-icon">02</span><span class="tab-span">Bot Fleet</span></button>
         </nav>
     <div class="rail-label">Operations</div>
     <nav class="nav" aria-label="Operations">
-      <button class="tab-btn active" data-tab="logs" type="button"><span class="tab-icon">01</span><span>Logs</span></button>
-      <button class="tab-btn" data-tab="env" type="button"><span class="tab-icon">02</span><span>Environment</span></button>
-      <button class="tab-btn" data-tab="files" type="button"><span class="tab-icon">03</span><span>Files</span></button>
-      <button class="tab-btn" data-tab="assistant" type="button"><span class="tab-icon">04</span><span>Assistant</span></button>
+      <button class="tab-btn active" data-tab="logs" type="button"><span class="tab-icon">01</span><span class="tab-span">Logs</span></button>
+      <button class="tab-btn" data-tab="env" type="button"><span class="tab-icon">02</span><span class="tab-span">Environment</span></button>
+      <button class="tab-btn" data-tab="files" type="button"><span class="tab-icon">03</span><span class="tab-span">Files</span></button>
+      <button class="tab-btn" data-tab="assistant" type="button"><span class="tab-icon">04</span><span class="tab-span">Assistant</span></button>
     </nav>
     <div class="rail-spacer"></div>
     <div class="host-mini">
       <div class="host-mini-label">Host</div>
       <div class="host-mini-name">github-runner</div>
-      <div class="host-mini-status"><span class="dot" id="rail-connection-dot"></span><span>live connection</span></div>
+      <div aria-live="polite" class="host-mini-status" data-state="busy" id="rail-connection-status"><span class="dot" id="rail-connection-dot"></span><span id="rail-connection-label">BUSY</span></div>
     </div>
   </aside>
 
@@ -389,9 +487,9 @@ dialog::backdrop { background:rgba(4,7,8,.72); }
     <header class="topbar">
       <div class="crumb"><span class="crumb-title">Control room</span><span class="crumb-meta">/ github-runner / production</span></div>
       <div class="top-actions">
-        <button class="btn btn-restart" id="redeploy-btn" type="button">Redeploy</button>
-        <a href="/logout" class="btn btn-stop">Logout</a>
-        <div class="connection" id="connection-pill"><span class="dot" id="connection-dot"></span><span id="connection-status">CONNECTED</span></div>
+        <button class="btn btn-restart" id="redeploy-btn" type="button"><span data-lucide="rotateCw"></span><span>Redeploy</span></button>
+        <a href="/logout" class="btn btn-delete"><span data-lucide="logOut"></span><span>Logout</span></a>
+        <div aria-live="polite" class="connection" data-state="busy" id="connection-pill"><span class="dot" id="connection-dot"></span><span id="connection-status">BUSY</span></div>
       </div>
     </header>
 
@@ -447,7 +545,7 @@ dialog::backdrop { background:rgba(4,7,8,.72); }
     <section class="section" id="bot-fleet-section">
         <div class="section-header">
           <div><div class="section-title">Bot fleet</div><div class="section-description">Processes installed on this host and their current lifecycle state.</div></div>
-          <button class="btn btn-primary" id="toggle-add-bot" type="button">+ Add bot</button>
+          <button class="btn btn-primary" id="toggle-add-bot" type="button"><span data-lucide="plus"></span><span>Add bot</span></button>
         </div>
 
         <div class="add-bot-panel" hidden id="add-bot-panel">
@@ -457,10 +555,10 @@ dialog::backdrop { background:rgba(4,7,8,.72); }
             <label class="field-group"><span class="field-label">Name</span><input autocomplete="off" class="field" id="bot-name" name="name" placeholder="Example Bot" required type="text"></label>
             <label class="field-group"><span class="field-label">GitHub repo</span><input autocomplete="off" class="field" id="bot-repository" name="repository" placeholder="https://github.com/org/repo.git" required type="url"></label>
             <label class="field-group"><span class="field-label">PAT</span><input autocomplete="off" class="field" id="bot-pat" name="pat" placeholder="Optional for private repos" type="password"></label>
-            <label class="field-group"><span class="field-label">Branch</span><div class="combo-control"><input aria-autocomplete="list" aria-controls="bot-branch-options" aria-expanded="false" aria-haspopup="listbox" autocomplete="off" class="field" id="bot-ref" name="ref" placeholder="main" required role="combobox" type="text"><button aria-controls="bot-branch-options" aria-expanded="false" aria-label="Show available branches" class="combo-toggle" id="bot-ref-toggle" type="button">⌄</button></div><div aria-label="Available branches" class="combo-options" hidden id="bot-branch-options" role="listbox"></div></label>
-            <label class="field-group"><span class="field-label">Entrypoint</span><div class="combo-control"><input aria-autocomplete="list" aria-controls="bot-entrypoint-options" aria-expanded="false" aria-haspopup="listbox" autocomplete="off" class="field" id="bot-entrypoint" name="entrypoint" placeholder="src/bot.py" required role="combobox" type="text"><button aria-controls="bot-entrypoint-options" aria-expanded="false" aria-label="Show available entrypoint files" class="combo-toggle" id="bot-entrypoint-toggle" type="button">⌄</button></div><div aria-label="Available entrypoint files" class="combo-options" hidden id="bot-entrypoint-options" role="listbox"></div></label>
+            <label class="field-group"><span class="field-label">Branch</span><div class="combo-control"><input aria-autocomplete="list" aria-controls="bot-branch-options" aria-expanded="false" aria-haspopup="listbox" autocomplete="off" class="field" id="bot-ref" name="ref" placeholder="main" required role="combobox" type="text"><button aria-controls="bot-branch-options" aria-expanded="false" aria-label="Show available branches" class="combo-toggle" id="bot-ref-toggle" type="button"><span data-lucide="chevronDown"></span></button><div aria-label="Available branches" class="combo-options" hidden id="bot-branch-options" role="listbox"></div></div></label>
+            <label class="field-group"><span class="field-label">Entrypoint</span><div class="combo-control"><input aria-autocomplete="list" aria-controls="bot-entrypoint-options" aria-expanded="false" aria-haspopup="listbox" autocomplete="off" class="field" id="bot-entrypoint" name="entrypoint" placeholder="src/bot.py" required role="combobox" type="text"><button aria-controls="bot-entrypoint-options" aria-expanded="false" aria-label="Show available entrypoint files" class="combo-toggle" id="bot-entrypoint-toggle" type="button"><span data-lucide="chevronDown"></span></button><div aria-label="Available entrypoint files" class="combo-options" hidden id="bot-entrypoint-options" role="listbox"></div></div></label>
             <div aria-live="polite" class="log-meta wide" id="repo-metadata-status" role="status"></div>
-            <label class="field-group wide"><span class="field-label">Environment</span><textarea class="field env-field" id="bot-environment" name="environment" placeholder="BOT_TOKEN=value1\nOTHER_VAR=value2" rows="4"></textarea></label>
+            <label class="field-group wide"><span class="field-label">Environment</span><textarea class="field env-field" id="bot-environment" name="environment" placeholder="BOT_TOKEN=value1&#10;OTHER_VAR=value2" rows="4"></textarea></label>
             <div class="inline-actions"><button class="btn btn-start" id="add-bot-submit" type="submit">Add bot</button><button class="btn" hidden id="cancel-bot-retry" type="button">Cancel retry</button><div class="log-meta" id="install-status">No install running.</div></div>
           </form>
         </div>
@@ -468,47 +566,58 @@ dialog::backdrop { background:rgba(4,7,8,.72); }
         <div class="grid" id="job-list" style="margin-top:12px;gap:8px;display:none"></div>
       </section>
 
+    
+    <div class="eyebrow" style="margin-top: 36px;">Infrastructure / Operations</div>
     <section class="console" id="console-section" aria-label="Server tools">
         <div class="console-header">
           <div class="console-tabs">
-            <button class="tab-btn active" data-tab="logs" type="button"><span class="tab-icon">01</span>Logs</button>
-            <button class="tab-btn" data-tab="env" type="button"><span class="tab-icon">02</span>Environment</button>
-            <button class="tab-btn" data-tab="files" type="button"><span class="tab-icon">03</span>Files</button>
-                        <button class="tab-btn" data-tab="assistant" type="button"><span class="tab-icon">04</span>Assistant</button>
+            <button class="tab-btn active" data-tab="logs" type="button"><span class="tab-icon">01</span><span class="tab-span">Logs</span></button>
+            <button class="tab-btn" data-tab="env" type="button"><span class="tab-icon">02</span><span class="tab-span">Environment</span></button>
+            <button class="tab-btn" data-tab="files" type="button"><span class="tab-icon">03</span><span class="tab-span">Files</span></button>
+            <button class="tab-btn" data-tab="assistant" type="button"><span class="tab-icon">04</span><span class="tab-span">Assistant</span></button>
           </div>
-          <div class="console-right" id="bot-select-wrapper"><select class="bot-select field" id="bot-select"><option value="server-secrets">Server Secrets</option></select></div>
+          <div class="console-right" id="bot-select-wrapper"><select class="bot-select field" id="bot-select"><option value="panel">Management Panel</option><option value="hermes">Hermes Gateway</option><option value="status-bot">Status Bot</option></select></div>
         </div>
 
         <div id="tab-logs">
-          <div class="console-toolbar"><div aria-live="polite" class="log-state" data-state="connecting" id="log-state" role="status"><span class="log-state-dot"></span><span id="log-state-text">CONNECTING</span></div><div class="log-meta" id="log-target">Live system logs</div><input class="log-search field" id="log-search" placeholder="Filter logs…" type="search"><div class="log-meta" id="log-count">0 lines</div><button class="btn btn-pause" id="pause-logs" type="button">Pause</button></div>
+          <div class="console-toolbar"><div aria-live="polite" class="log-state status-indicator" data-state="busy" id="log-state" role="status"><span class="log-state-dot"></span><span id="log-state-text">BUSY</span></div><div class="log-meta" id="log-target">Live system logs</div><input class="log-search field" id="log-search" placeholder="Filter logs…" type="search"><div class="log-meta" id="log-count">0 lines</div><button class="btn btn-pause" id="pause-logs" type="button">Pause</button></div>
           <div class="console-body"><div class="logs-box" id="logs-content">Loading logs…</div></div>
         </div>
 
         <div hidden id="tab-env">
-          <div class="console-toolbar"><button class="btn" id="toggle-env-mask" type="button">Toggle secret visibility</button><div class="log-meta" id="env-count">0 variables</div></div>
+          <div class="console-toolbar"><button aria-checked="true" aria-label="Mask secret values" class="env-visibility-toggle" id="toggle-env-mask" role="switch" type="button"><span aria-hidden="true" class="env-switch-track"><span class="env-switch-thumb"></span></span><span>Mask secrets</span></button><div class="log-meta" id="env-count">0 variables</div></div>
           <div class="console-body"><div class="env-table-wrapper"><table class="env-table"><thead><tr><th>Variable</th><th>Value</th></tr></thead><tbody id="env-content"></tbody></table></div></div>
         </div>
 
         <div hidden id="tab-files">
-          <div class="console-toolbar file-toolbar"><span class="log-meta" id="current-file-path">Path: /home/runner/bot-server</span><input aria-label="Search files and folders below this directory" autocomplete="off" class="field" id="file-search" placeholder="Search files and folders below" type="search"><button class="btn" id="parent-dir-btn" type="button">Parent directory</button></div>
-          <div class="console-body"><div class="file-list" id="file-entries"></div><div class="logs-box file-preview" hidden id="file-preview-box"></div></div>
+          <div class="console-toolbar file-toolbar">
+            <span class="log-meta" style="min-width: fit-content;" id="current-file-path">
+                Path: /home/runner/bot-server
+            </span>
+            <button class="btn" style="min-width: fit-content;" id="parent-dir-btn" type="button">
+                <span data-lucide="arrowUp"></span><span>Parent directory</span>
+            </button>
+            <div class="file-search-wrap"><span aria-hidden="true" class="file-search-icon" data-lucide="search"></span><input aria-label="Search files and folders below this directory" autocomplete="off" class="field" id="file-search" placeholder="Search files and folders below this directory" type="search"></div>
+        </div>
+          <div class="console-body"><div class="file-list" id="file-entries"></div><div aria-label="File preview" class="file-preview" hidden id="file-preview-box"><div role="tablist" aria-label="Open files" id="file-preview-tabs" class="file-preview-tabs"></div><div class="file-preview-body"><pre aria-hidden="true" class="file-preview-lines" id="file-preview-lines"></pre><pre aria-label="File contents" class="file-preview-content" id="file-preview-content"></pre></div></div></div>
         </div>
 
         <div hidden id="tab-assistant">
           <div class="console-body">
             <div class="assistant-chat" id="assistant-chat">
               <aside class="assistant-sidebar" id="assistant-sidebar">
-                <div class="assistant-sidebar-header"><div class="assistant-sidebar-title">Sessions</div><div class="assistant-sidebar-actions"><button aria-label="New chat" class="assistant-sidebar-toggle assistant-new-chat" id="new-chat-btn" title="New chat" type="button">+</button><button class="assistant-sidebar-toggle" id="sidebar-toggle-btn" title="Collapse sidebar" type="button">‹</button></div></div>
+                <div class="assistant-sidebar-header"><div class="assistant-sidebar-title">Sessions</div><div class="assistant-sidebar-actions"><button aria-label="New chat" class="assistant-sidebar-toggle assistant-new-chat" id="new-chat-btn" title="New chat" type="button"><span data-lucide="plus"></span></button><button aria-label="Collapse sidebar" class="assistant-sidebar-toggle" id="sidebar-toggle-btn" title="Collapse sidebar" type="button"><span data-lucide="chevronLeft"></span></button></div></div>
                 <div class="assistant-session-list" id="assistant-session-list"><div class="assistant-session-empty">No sessions loaded</div></div>
                 <div class="assistant-sidebar-divider"></div>
-                <div class="assistant-settings-panel"><div class="assistant-settings-title">Provider settings</div><div class="assistant-settings-row"><select aria-label="Provider" class="field" id="assistant-provider-select"></select></div><div class="assistant-settings-row" hidden id="assistant-base-url-row"><input aria-label="Base URL" class="field" id="assistant-base-url" placeholder="Base URL" type="url"></div><div class="assistant-settings-row"><input aria-label="API key" autocomplete="off" class="field" id="assistant-api-key" placeholder="API key or token" type="password"></div><div class="assistant-settings-row"><div class="model-combo" id="assistant-model-combo"><input aria-autocomplete="list" aria-controls="assistant-model-list" aria-expanded="false" autocomplete="off" class="field" id="assistant-model" placeholder="Model ID" role="combobox" spellcheck="false" type="text"><button aria-label="Show fetched models" class="model-combo-toggle" hidden id="assistant-model-toggle" tabindex="-1" type="button">⌄</button><div class="model-combo-list" id="assistant-model-list" role="listbox"></div></div><button class="btn" id="assistant-fetch-btn" type="button">Fetch</button></div><div class="assistant-settings-actions"><button class="btn btn-start btn-grow" id="assistant-save-btn" type="button">Save &amp; restart</button><button class="btn" id="assistant-cancel-btn" type="button">Cancel</button></div><div class="assistant-settings-status" id="assistant-settings-status"></div></div>
-                <div class="assistant-sidebar-footer"><button class="btn btn-start" id="providers-btn" type="button">Providers</button><button class="assistant-rail-btn" id="rail-providers-btn" title="Providers" type="button">⚙</button></div>
+                <div class="assistant-settings-panel"><div class="assistant-settings-title">Provider settings</div><div class="assistant-settings-row"><select aria-label="Provider" class="field" id="assistant-provider-select"></select></div><div class="assistant-settings-row" hidden id="assistant-base-url-row"><input aria-label="Base URL" class="field" id="assistant-base-url" placeholder="Base URL" type="url"></div><div class="assistant-settings-row"><input aria-label="API key" autocomplete="off" class="field" id="assistant-api-key" placeholder="API key or token" type="password"></div><div class="assistant-settings-row"><div class="model-combo" id="assistant-model-combo"><input aria-autocomplete="list" aria-controls="assistant-model-list" aria-expanded="false" autocomplete="off" class="field" id="assistant-model" placeholder="Model ID" role="combobox" spellcheck="false" type="text"><button aria-label="Show fetched models" class="model-combo-toggle" hidden id="assistant-model-toggle" tabindex="-1" type="button"><span data-lucide="chevronDown"></span></button><div class="model-combo-list" hidden id="assistant-model-list" role="listbox"></div></div><button class="btn" id="assistant-fetch-btn" type="button">Fetch</button></div><div class="assistant-settings-actions"><button class="btn btn-start btn-grow" id="assistant-save-btn" type="button">Save &amp; restart</button><button class="btn" id="assistant-cancel-btn" type="button">Cancel</button></div>
+            </div>
+                <div class="assistant-sidebar-footer"><button class="btn btn-start" id="providers-btn" type="button">Providers</button><button aria-label="Providers" class="assistant-rail-btn" id="rail-providers-btn" title="Providers" type="button"><span data-lucide="slidersHorizontal"></span></button></div>
               </aside>
               <div class="assistant-sidebar-backdrop" id="assistant-backdrop"></div>
               <div class="assistant-main">
-                <div class="assistant-model-strip"><button class="btn btn-compact assistant-drawer-toggle" id="sessions-open-btn" type="button">Chats</button><span class="assistant-model-label">Active model</span><span class="assistant-model-value" id="assistant-model-name">—</span><div aria-live="polite" class="model-status" data-state="checking" id="assistant-model-status" role="status"><span class="model-status-dot"></span><span class="model-status-text">CHECKING</span></div></div>
+                <div class="assistant-model-strip"><button class="btn btn-compact assistant-drawer-toggle" id="sessions-open-btn" type="button">Chats</button><span class="assistant-model-label">Active model</span><span class="assistant-model-value" id="assistant-model-name">—</span><div aria-live="polite" class="model-status status-indicator" data-state="busy" id="assistant-model-status" role="status"><span class="model-status-dot"></span><span class="model-status-text">BUSY</span></div></div>
                 <div class="assistant-messages" id="assistant-messages"></div><div class="assistant-activity" id="assistant-activity"></div>
-                <div class="assistant-composer"><textarea aria-label="Message Hermes" class="assistant-input field" id="assistant-input" placeholder="Ask Hermes to inspect or manage the server…" rows="2"></textarea><button class="btn btn-start assistant-send" id="assistant-send" title="Send message" type="button">Send</button></div>
+                <div class="assistant-composer"><div class="assistant-input-wrap"><textarea aria-label="Message Hermes" class="assistant-input field" id="assistant-input" placeholder="Ask Hermes to inspect or manage the server…" rows="2"></textarea><button aria-label="Send message" class="btn btn-start assistant-send" id="assistant-send" title="Send message" type="button"><span data-lucide="sendHorizontal"></span></button></div></div>
               </div>
             </div>
           </div>
@@ -540,13 +649,47 @@ dialog::backdrop { background:rgba(4,7,8,.72); }
 </div>
 </form>
 </dialog>
-<dialog aria-labelledby="bot-delete-title" class="bot-delete-dialog" id="bot-delete-dialog">
+<dialog aria-describedby="bot-delete-description bot-delete-warning" aria-labelledby="bot-delete-title" class="bot-delete-dialog" id="bot-delete-dialog" role="alertdialog">
 <form id="bot-delete-form">
-<h2 id="bot-delete-title">Delete bot?</h2>
-<p id="bot-delete-description"></p>
+<div class="bot-delete-dialog-heading">
+<span aria-hidden="true" class="bot-delete-dialog-icon"><span data-lucide="trash"></span></span>
+<div><p class="bot-delete-dialog-kicker">Permanent action</p>
+<h2 id="bot-delete-title">Permanently delete this bot?</h2>
+</div>
+</div>
+<p class="bot-delete-description" id="bot-delete-description"></p>
+<p class="bot-delete-warning" id="bot-delete-warning">This action cannot be undone.</p>
 <div class="bot-delete-dialog-actions">
-<button class="btn" id="bot-delete-cancel" type="button">Cancel</button>
-<button class="btn btn-delete-bot" id="bot-delete-confirm" type="submit">Delete bot</button>
+<button autofocus class="btn" id="bot-delete-cancel" type="button">Cancel</button>
+<button class="btn btn-delete-bot" id="bot-delete-confirm" type="submit"><span data-lucide="trash"></span><span id="bot-delete-confirm-label">Delete bot</span></button>
+</div>
+</form>
+</dialog>
+<dialog aria-describedby="bot-update-description bot-update-state" aria-labelledby="bot-update-title" class="bot-update-dialog" id="bot-update-dialog" role="dialog">
+<form id="bot-update-form">
+<div class="bot-update-dialog-heading">
+<span aria-hidden="true" class="bot-update-dialog-icon"><span data-lucide="refreshCw"></span></span>
+<div><p class="bot-update-dialog-kicker">Bot update</p>
+<h2 id="bot-update-title">Update this bot?</h2>
+</div>
+</div>
+<p class="bot-update-description" id="bot-update-description">The bot will be refreshed from its repository.</p>
+<p class="bot-update-state" id="bot-update-state"></p>
+<div class="bot-update-dialog-actions">
+<button autofocus class="btn" id="bot-update-cancel" type="button">Cancel</button>
+<button class="btn btn-update-bot" id="bot-update-confirm" type="submit"><span data-lucide="refreshCw"></span><span id="bot-update-confirm-label">Update bot</span></button>
+</div>
+</form>
+</dialog>
+<dialog aria-describedby="file-delete-description file-delete-warning" aria-labelledby="file-delete-title" class="file-delete-dialog" id="file-delete-dialog">
+<form id="file-delete-form">
+<p class="file-delete-kicker">PERMANENT ACTION</p>
+<h2 id="file-delete-title">Delete item?</h2>
+<p class="file-delete-description" id="file-delete-description">Permanently remove <code id="file-delete-name"></code>?</p>
+<p class="file-delete-warning" id="file-delete-warning">This action cannot be undone.</p>
+<div class="file-delete-dialog-actions">
+<button autofocus class="btn" id="file-delete-cancel" type="button">Cancel</button>
+<button class="btn file-delete-confirm" id="file-delete-confirm" type="submit">Delete item</button>
 </div>
 </form>
 </dialog>
@@ -585,11 +728,73 @@ const PROVIDER_FALLBACK = [
     { id: 'custom', name: 'Custom OpenAI-Compatible' },
 ];
 
-const ICON_ATTRS = 'viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
-const ICONS = {
-    pencil: `<svg ${ICON_ATTRS}><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`,
-    trash: `<svg ${ICON_ATTRS}><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`,
+const ICON_PATHS = {
+    arrowUp: '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+    bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
+    bookOpen: '<path d="M12 7v14"/><path d="M3 18V5a2 2 0 0 1 2-2h4a3 3 0 0 1 3 3 3 3 0 0 1 3-3h4a2 2 0 0 1 2 2v13"/><path d="M3 18a2 2 0 0 1 2-2h4a3 3 0 0 1 3 3 3 3 0 0 1 3-3h4a2 2 0 0 1 2 2"/>',
+    bot: '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
+    chart: '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+    check: '<path d="m5 12 4 4L19 6"/>',
+    chevronDown: '<path d="m6 9 6 6 6-6"/>',
+    chevronLeft: '<path d="m15 18-6-6 6-6"/>',
+    chevronRight: '<path d="m9 18 6-6-6-6"/>',
+    copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+    file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/>',
+    folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+    gamepad: '<path d="M6 12h4m-2-2v4"/><path d="M14 13h.01M18 11h.01"/><path d="M6.5 7h11a4.5 4.5 0 0 1 4.4 5.4l-1 4.5a2.5 2.5 0 0 1-4.1 1.3l-2.1-1.8h-5.4l-2.1 1.8a2.5 2.5 0 0 1-4.1-1.3l-1-4.5A4.5 4.5 0 0 1 6.5 7Z"/>',
+    logOut: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+    messageCircle: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+    palette: '<path d="M12 22a10 10 0 1 1 10-10c0 1.7-1.3 3-3 3h-1.8c-.8 0-1.2.9-.7 1.5l.3.4c1 1.3.1 3.1-1.5 3.1Z"/><path d="M7.5 10h.01M12 7.5h.01M16.5 10h.01"/>',
+    pause: '<rect width="4" height="16" x="6" y="4" rx="1"/><rect width="4" height="16" x="14" y="4" rx="1"/>',
+    pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+    play: '<path d="m7 4 13 8-13 8z"/>',
+    plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
+    refreshCw: '<path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M5.6 9A7 7 0 0 1 18 6l2 6"/><path d="M18.4 15A7 7 0 0 1 6 18l-2-6"/>',
+    rotateCw: '<path d="M20 7v5h-5"/><path d="M20 12a8 8 0 1 1-2.3-5.7L20 9"/>',
+    satellite: '<path d="M13 7 9 3 5 7l4 4"/><path d="m17 11 4 4-4 4-4-4"/><path d="m8 12 4 4"/><path d="m16 8 4-4"/><path d="M14 6 8 12"/><path d="m18 10-6 6"/><path d="M2 22l5-5"/>',
+    search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>',
+    send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+    sendHorizontal: '<path d="m3 3 3 9-3 9 19-9Z"/><path d="M6 12h16"/>',
+    server: '<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/>',
+    settings: '<path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.7 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.7-1l-1.7.7-1.4-2.4 1.4-1.1a7 7 0 0 1 0-2l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.7-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.7 1l1.7-.7 1.4 2.4-1.4 1.1a7 7 0 0 1 0 2Z"/>',
+    shoppingCart: '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2 2h2l2.7 12.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L22 7H5"/>',
+    slidersHorizontal: '<path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/>',
+    square: '<rect width="14" height="14" x="5" y="5" rx="2"/>',
+    trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+    wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.7 6.7a2.1 2.1 0 0 1-3-3l6.7-6.7a6 6 0 0 1 7.9-7.9Z"/>',
+    x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
 };
+const iconMarkup = (name, size = 14) => {
+    if (!Object.hasOwn(ICON_PATHS, name)) throw new Error(`Unknown Lucide icon: ${name}`);
+    const paths = ICON_PATHS[name];
+    return `<svg class="lucide-icon" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+};
+const ICONS = Object.fromEntries(Object.keys(ICON_PATHS).map(name => [name, iconMarkup(name)]));
+
+function renderStaticIcons() {
+    document.querySelectorAll('[data-lucide]').forEach(element => {
+        element.innerHTML = iconMarkup(element.dataset.lucide, Number(element.dataset.iconSize) || 14);
+    });
+}
+
+const BOT_ICON_EMOJIS = ['🤖', '💬', '📊', '🎮', '🛒', '📚', '🎨', '🔔', '🧰', '🛰️'];
+const LEGACY_BOT_ICON_EMOJIS = {
+    bot: '🤖',
+    messageCircle: '💬',
+    chart: '📊',
+    gamepad: '🎮',
+    shoppingCart: '🛒',
+    bookOpen: '📚',
+    palette: '🎨',
+    bell: '🔔',
+    wrench: '🧰',
+    satellite: '🛰️',
+};
+
+function botIconEmoji(icon) {
+    if (BOT_ICON_EMOJIS.includes(icon)) return icon;
+    return LEGACY_BOT_ICON_EMOJIS[icon] || '🤖';
+}
 
 const state = {
     tab: 'logs',
@@ -605,16 +810,17 @@ const state = {
     iconEditBotId: null,
     iconEditValue: null,
     deleteBotId: null,
+    updateBotId: null,
     addBotPanelCloseTimer: null,
     repoMetadata: { timer: null, requestId: 0, repository: '' },
     comboOptions: new Map(),
     comboOpenId: null,
     comboActiveIndex: -1,
     pendingBots: new Set(),   // bots with a start/stop/restart request in flight
-    logs: { raw: '', paused: false, target: '', health: 'connecting' },
+    logs: { raw: '', paused: false, target: '', health: 'busy' },
     metrics: { cpu: [], ram: [], disk: [], maxPoints: 60 },   // health: connecting | live | error
     env: { data: {}, masked: true, notice: '' },
-    files: { path: '', parent: null, query: '', searchTimer: null, searchRequestId: 0 },
+    files: { path: '', parent: null, query: '', searchTimer: null, searchRequestId: 0, pendingDelete: null, previews: [], activePreviewPath: '', previewRequestId: 0 },
     assistant: {
         messages: [],
         abort: null,
@@ -1096,9 +1302,20 @@ function showToast(message, type = 'success') {
 }
 
 /* 4. Status polling --------------------------------------------------------- */
-function setConnection(online) {
-    $('connection-dot').classList.toggle('offline', !online);
-    $('connection-status').textContent = online ? 'CONNECTED' : 'OFFLINE';
+function setConnectionState(status, hint = '') {
+    const labels = { connected: 'CONNECTED', busy: 'BUSY', error: 'ERROR' };
+    if (!Object.hasOwn(labels, status)) throw new Error(`Unknown connection state: ${status}`);
+    const label = labels[status];
+    for (const [containerId, labelId] of [
+        ['connection-pill', 'connection-status'],
+        ['rail-connection-status', 'rail-connection-label'],
+    ]) {
+        const container = $(containerId);
+        container.dataset.state = status;
+        container.title = hint;
+        container.setAttribute('aria-label', hint ? `${label}: ${hint}` : label);
+        $(labelId).textContent = label;
+    }
 }
 
 /** Start is only usable while a bot is stopped, Restart/Stop only while it runs; all three lock during a request. */
@@ -1136,7 +1353,7 @@ function renderBotCards() {
             grid.replaceChildren(h('div', { class: 'panel bot-card', style: 'grid-column: 1 / -1;' },
                 h('div', { class: 'bot-header' },
                     h('div', { class: 'bot-identity' },
-                        h('div', { class: 'bot-icon' }, '🤖'),
+                        h('div', { class: 'bot-icon', text: '🤖' }),
                         h('div', {}, h('div', { class: 'bot-name', text: 'No bots yet' }), h('div', { class: 'bot-id', text: 'install a bot from GitHub to begin' }))),
                     h('div', { class: 'status stopped' }, h('span', { class: 'status-dot' }), 'EMPTY')),
                 h('div', { class: 'bot-stats' },
@@ -1150,7 +1367,7 @@ function renderBotCards() {
         grid.replaceChildren(...entries.map(([key, bot]) => h('article', { class: 'panel bot-card', 'data-bot-card': key },
             h('div', { class: 'bot-header' },
                 h('div', { class: 'bot-identity' },
-                        h('button', { class: 'bot-icon bot-icon-button', type: 'button', 'data-bot-icon': key, title: 'Change bot emoji', 'aria-label': `Change ${bot.name || key} icon` }, bot.icon || '🤖'),
+                        h('button', { class: 'bot-icon bot-icon-button', type: 'button', 'data-bot-icon': key, title: 'Change bot emoji', 'aria-label': `Change ${bot.name || key} icon`, text: botIconEmoji(bot.icon) }),
                     h('div', {},
                         h('div', { class: 'bot-name', text: bot.name || key }),
                         h('div', { class: 'bot-id', text: key }))),
@@ -1161,12 +1378,12 @@ function renderBotCards() {
                 h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Uptime' }), h('div', { class: 'stat-value', 'data-bot-field': 'uptime', text: bot.uptime || '—' })),
                 h('div', { class: 'bot-stat' }, h('div', { class: 'stat-label', text: 'Restarts' }), h('div', { class: 'stat-value', 'data-bot-field': 'restarts', text: bot.restarts ?? 0 }))),
             h('div', { class: 'bot-actions' },
-                h('button', { class: 'btn btn-start', type: 'button', 'data-bot': key, 'data-action': 'start', text: '▶️ Start' }),
-                h('button', { class: 'btn btn-restart', type: 'button', 'data-bot': key, 'data-action': 'restart', text: '🔄 Restart' }),
-                h('button', { class: 'btn btn-stop', type: 'button', 'data-bot': key, 'data-action': 'stop', text: '⏹️ Stop' }),
-                h('button', { class: 'btn btn-management', type: 'button', 'data-bot-management': key, 'data-management-action': 'edit', text: '✏️ Edit' }),
-                h('button', { class: 'btn btn-restart btn-management', type: 'button', 'data-bot-management': key, 'data-management-action': 'update', text: '⬆️ Update' }),
-                h('button', { class: 'btn btn-delete-bot btn-management', type: 'button', 'data-bot-management': key, 'data-management-action': 'delete', text: '🗑️ Delete' })))));
+                h('button', { class: 'btn btn-start', type: 'button', 'data-bot': key, 'data-action': 'start' }, h('span', { html: ICONS.play }), 'Start'),
+                h('button', { class: 'btn btn-management', type: 'button', 'data-bot': key, 'data-action': 'restart' }, h('span', { html: ICONS.rotateCw }), 'Restart'),
+                h('button', { class: 'btn btn-stop', type: 'button', 'data-bot': key, 'data-action': 'stop' }, h('span', { html: ICONS.square }), 'Stop'),
+                h('button', { class: 'btn btn-management', type: 'button', 'data-bot-management': key, 'data-management-action': 'edit' }, h('span', { html: ICONS.pencil }), 'Edit'),
+                h('button', { class: 'btn btn-management btn-management', type: 'button', 'data-bot-management': key, 'data-management-action': 'update' }, h('span', { html: ICONS.refreshCw }), 'Update'),
+                h('button', { class: 'btn btn-delete btn-management', type: 'button', 'data-bot-management': key, 'data-management-action': 'delete' }, h('span', { html: ICONS.trash }), 'Delete')))));
         grid.querySelectorAll('[data-bot][data-action]').forEach(button => {
             button.onclick = () => controlBot(button.dataset.bot, button.dataset.action);
         });
@@ -1187,7 +1404,7 @@ function renderBotCards() {
         status.className = `status ${running ? 'running' : 'stopped'}`;
         status.querySelector('[data-bot-field="status"]').textContent = running ? 'RUNNING' : 'STOPPED';
         const iconButton = card.querySelector('[data-bot-icon]');
-        iconButton.textContent = bot.icon || '🤖';
+        iconButton.textContent = botIconEmoji(bot.icon);
         iconButton.setAttribute('aria-label', `Change ${bot.name || key} icon`);
         card.querySelector('[data-bot-field="pid"]').textContent = bot.pid || '—';
         card.querySelector('[data-bot-field="uptime"]').textContent = bot.uptime || '—';
@@ -1215,11 +1432,11 @@ function setAddBotPanelOpen(isOpen) {
     if (isOpen) {
         panel.hidden = false;
         requestAnimationFrame(() => panel.classList.add('is-open'));
-        trigger.textContent = '− Close';
+        trigger.innerHTML = `${ICONS.x}<span>Close</span>`;
         return;
     }
     panel.classList.remove('is-open');
-    trigger.textContent = '＋ Add bot';
+    trigger.innerHTML = `${ICONS.plus}<span>Add bot</span>`;
     state.addBotPanelCloseTimer = window.setTimeout(() => {
         if (!panel.classList.contains('is-open')) panel.hidden = true;
     }, 360);
@@ -1412,12 +1629,12 @@ function queueRepositoryMetadata({ includeBranches = true, ref = null, delay = 5
 function resetBotRetryMode(clearForm = false) {
     state.retryJobId = null;
     state.editBotId = null;
-    $('add-bot-submit').textContent = '🚀 Add bot';
+    $('add-bot-submit').innerHTML = `${ICONS.plus}<span>Add bot</span>`;
     $('cancel-bot-retry').hidden = true;
     $('cancel-bot-retry').textContent = 'Cancel';
     $('bot-form-title').textContent = 'Add a Bot';
     $('bot-pat').placeholder = 'GitHub PAT for private repos';
-    $('bot-environment').placeholder = 'BOT_TOKEN=value1 OTHER_VAR=value2';
+    $('bot-environment').placeholder = 'BOT_TOKEN=value1\nOTHER_VAR=value2';
     if (clearForm) {
         $('add-bot-form').reset();
         $('bot-ref').value = '';
@@ -1461,7 +1678,8 @@ async function prepareBotEdit(botKey) {
 
 function changeBotIcon(botKey) {
     state.iconEditBotId = botKey;
-    state.iconEditValue = state.bots[botKey]?.icon || '🤖';
+    const currentIcon = state.bots[botKey]?.icon;
+    state.iconEditValue = botIconEmoji(currentIcon);
     document.querySelectorAll('[data-bot-icon-choice]').forEach(button => {
         button.setAttribute('aria-pressed', String(button.dataset.botIconChoice === state.iconEditValue));
     });
@@ -1496,29 +1714,53 @@ async function manageBot(botKey, action) {
 async function updateBot(botKey) {
     const bot = state.bots[botKey];
     if (!bot || state.pendingBots.has(botKey)) return;
-    if (bot.running && !confirm(`Update ${bot.name || 'this bot'}? Its process will stop during the update and restart automatically when the update succeeds.`)) return;
+    const botName = bot.name || 'bot';
+    state.updateBotId = botKey;
+    $('bot-update-title').textContent = `Update ${botName}?`;
+    $('bot-update-confirm-label').textContent = `Update ${botName}`;
+    $('bot-update-state').textContent = bot.running
+        ? 'This bot is running. It will stop during the update and restart if the update succeeds.'
+        : 'This bot is stopped. It will stay stopped after a successful update.';
+    $('bot-update-dialog').showModal();
+}
 
+async function confirmUpdateBot(event) {
+    event.preventDefault();
+    const botKey = state.updateBotId;
+    const bot = state.bots[botKey];
+    if (!bot || state.pendingBots.has(botKey)) return;
     state.pendingBots.add(botKey);
     syncBotButtons(botKey);
+    $('bot-update-confirm').disabled = true;
     try {
         const data = await apiJson(`/api/bots/${encodeURIComponent(botKey)}/update`, { method: 'POST' }, 'Could not update bot');
+        $('bot-update-dialog').close();
+        state.updateBotId = null;
         showToast(`Update queued: ${data.job?.bot_name || bot.name}`);
         await refreshInstallJobs();
         await refreshStatus();
     } catch (error) {
         showToast(error.message, 'error');
     } finally {
+        $('bot-update-confirm').disabled = false;
         state.pendingBots.delete(botKey);
         syncBotButtons(botKey);
     }
 }
 
+function cancelUpdateBot() {
+    $('bot-update-dialog').close();
+    state.updateBotId = null;
+}
+
 async function deleteBot(botKey) {
     const bot = state.bots[botKey];
     if (!bot || state.pendingBots.has(botKey)) return;
+    const botName = bot.name || 'bot';
     state.deleteBotId = botKey;
-    $('bot-delete-title').textContent = `Delete ${bot.name || 'bot'}?`;
-    $('bot-delete-description').textContent = 'This permanently removes the bot files and saved credentials from this runner. Shared cache snapshots are preserved because they contain other bots too; the cleaned fleet is saved when this workflow completes.';
+    $('bot-delete-title').textContent = `Permanently delete ${botName}?`;
+    $('bot-delete-description').textContent = 'This removes the bot files and saved credentials from this runner. Shared cache snapshots used by other bots will be kept.';
+    $('bot-delete-confirm-label').textContent = `Delete ${botName}`;
     $('bot-delete-dialog').showModal();
 }
 
@@ -1561,7 +1803,7 @@ function prepareBotRetry(jobId, announceFailure = false) {
     $('bot-environment').value = '';
     $('bot-environment').placeholder = 'Leave blank to keep saved variables';
     showBotAddError(errorMessage);
-    $('add-bot-submit').textContent = '↻ Retry install';
+    $('add-bot-submit').innerHTML = `${ICONS.refreshCw}<span>Retry install</span>`;
     $('cancel-bot-retry').hidden = false;
     $('install-status').textContent = 'Edit the settings, then retry. Blank secrets are kept.';
     state.repoMetadata.repository = $('bot-repository').value.trim();
@@ -1764,6 +2006,7 @@ function updateMetricCharts(system) {
 }
 
 async function refreshStatus() {
+    setConnectionState('busy');
     try {
         const { res, data } = await fetchJson('/api/status', { cache: 'no-store' }, 'Status unavailable');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1798,27 +2041,35 @@ async function refreshStatus() {
         renderBotCards();
 
         $('last-update').textContent = new Date().toLocaleTimeString();
-        setConnection(true);
+        setConnectionState('connected');
     } catch (error) {
         console.error('Status error', error);
-        setConnection(false);
+        setConnectionState('error', error.message);
     }
 }
 
 /* 5. Console tabs ----------------------------------------------------------- */
 function getBotTargets() {
-    return [...new Set([...(Object.keys(state.bots || {})), 'server-secrets'])];
+    const serviceTargets = state.tab === 'logs'
+        ? ['panel', 'hermes', 'status-bot']
+        : ['server-secrets'];
+    return [...new Set([...serviceTargets, ...Object.keys(state.bots || {})])];
 }
 
 function syncBotSelectOptions() {
     const select = $('bot-select');
     if (!select) return;
     const targets = getBotTargets();
-    const currentValue = select.value || targets[0] || 'server-secrets';
+    const currentValue = select.value || targets[0];
+    const serviceLabels = {
+        panel: 'Management Panel',
+        hermes: 'Hermes Gateway',
+        'status-bot': 'Status Bot'
+    };
     const options = targets.map(key => {
         if (key === 'server-secrets') return h('option', { value: key, text: 'Server Secrets' });
         const bot = state.bots?.[key];
-        return h('option', { value: key, text: bot?.name || key });
+        return h('option', { value: key, text: serviceLabels[key] || bot?.name || key });
     });
     select.replaceChildren(...options);
     if (targets.includes(currentValue)) select.value = currentValue;
@@ -1832,6 +2083,7 @@ const selectedTarget = () => {
 
 function switchTab(tab) {
     state.tab = tab;
+    syncBotSelectOptions();
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
     TAB_IDS.forEach(id => { $(`tab-${id}`).hidden = id !== tab; });
     $('bot-select-wrapper').hidden = tab === 'files' || tab === 'assistant';
@@ -1882,13 +2134,13 @@ function renderLogs({ forceBottom = false } = {}) {
     if (forceBottom || atBottom) box.scrollTop = box.scrollHeight;   // keep the view where the user left it otherwise
 }
 
-/** Indicator next to the log filter: LIVE (green), PAUSED (white, manual) or ERROR (red, last fetch failed). */
+/** Reflects the latest live log endpoint check; pause is a separate user-selected state. */
 function renderLogState(hint = '') {
     const status = state.logs.paused ? 'paused' : state.logs.health;
     const indicator = $('log-state');
     indicator.dataset.state = status;
-    indicator.title = status === 'error' ? hint : '';
-    $('log-state-text').textContent = { connecting: 'CONNECTING', live: 'LIVE', paused: 'PAUSED', error: 'ERROR' }[status];
+    indicator.title = status === 'error' ? hint : status === 'paused' ? 'Log polling is paused' : '';
+    $('log-state-text').textContent = { busy: 'BUSY', connected: 'CONNECTED', paused: 'PAUSED', error: 'ERROR' }[status];
 }
 
 async function refreshLogs() {
@@ -1898,10 +2150,12 @@ async function refreshLogs() {
     if (state.tab !== 'logs' || (state.logs.paused && !targetChanged)) return;
     state.logs.target = key;
     $('log-target').textContent = label;
+    state.logs.health = 'busy';
+    renderLogState();
     try {
         const data = await apiJson(`/api/logs/${encodeURIComponent(key)}?lines=200`, { cache: 'no-store' }, 'Unable to load logs');
         state.logs.raw = data.logs || '';
-        state.logs.health = 'live';
+        state.logs.health = 'connected';
         $('log-count').textContent = `${data.total_lines || 0} lines`;
         renderLogState();
     } catch (error) {
@@ -1917,7 +2171,9 @@ async function refreshLogs() {
 function togglePauseLogs() {
     state.logs.paused = !state.logs.paused;
     const button = $('pause-logs');
-    button.textContent = state.logs.paused ? '▶ Resume' : '⏸ Pause';
+    button.innerHTML = state.logs.paused
+        ? `${ICONS.play}<span>Resume</span>`
+        : `${ICONS.pause}<span>Pause</span>`;
     button.classList.toggle('btn-pause', !state.logs.paused);
     button.classList.toggle('btn-start', state.logs.paused);
     renderLogState();
@@ -1926,6 +2182,7 @@ function togglePauseLogs() {
 
 /* Environment */
 function renderEnv() {
+    $('toggle-env-mask').setAttribute('aria-checked', String(state.env.masked));
     const rows = Object.entries(state.env.data).map(([name, value]) =>
         h('tr', {}, h('td', { text: name }), h('td', { text: state.env.masked ? '••••••••••••' : value })));
     if (!rows.length) {
@@ -1956,9 +2213,20 @@ async function refreshEnv() {
 }
 
 /* Files */
+function getFileEntrySubtitle(entry, searchResult) {
+    if (!searchResult || !entry.relative_path) return '';
+    const normalizedPath = entry.relative_path.replace(/\\/g, '/');
+    const fileName = entry.name;
+    if (normalizedPath === fileName) return '';
+    const parentPath = normalizedPath.endsWith(`/${fileName}`)
+        ? normalizedPath.slice(0, -(fileName.length + 1))
+        : normalizedPath;
+    return parentPath || '';
+}
+
 function renderFileEntries(entries, { searchResult = false, truncated = false } = {}) {
     const children = entries.map(entry => {
-        const label = searchResult ? entry.relative_path || entry.name : entry.name;
+        const subtitle = getFileEntrySubtitle(entry, searchResult);
         return h('div', {
             class: 'file-item',
             onclick: event => {
@@ -1968,8 +2236,10 @@ function renderFileEntries(entries, { searchResult = false, truncated = false } 
             },
         },
             h('div', { class: 'file-item-main' },
-                h('span', { class: 'file-icon', text: entry.is_dir ? '📁' : '📄' }),
-                h('span', { class: 'file-item-name', text: label, title: label })),
+                h('span', { class: 'file-icon', html: ICONS[entry.is_dir ? 'folder' : 'file'] }),
+            h('span', { class: 'file-item-labels' },
+                h('span', { class: 'file-item-name', text: entry.name, title: entry.name }),
+                ...(subtitle ? [h('span', { class: 'file-item-path', text: subtitle, title: entry.relative_path })] : []))),
             h('div', { class: 'file-item-end' },
                 h('span', { class: 'log-meta', text: entry.is_dir ? 'DIR' : formatBytes(entry.size_bytes) }),
                 h('button', {
@@ -1992,7 +2262,7 @@ function renderFileEntries(entries, { searchResult = false, truncated = false } 
         }));
     }
     if (truncated) {
-        children.push(h('div', { class: 'file-empty', text: 'Showing the first 1000 matches. Refine your search.' }));
+        children.push(h('div', { class: 'file-empty', text: 'Search results were limited. Refine your search.' }));
     }
     $('file-entries').replaceChildren(...children);
 }
@@ -2009,11 +2279,71 @@ async function loadFiles(path = state.files.path) {
         state.files.parent = data.parent_path;
         $('current-file-path').textContent = `Path: ${data.current_path}`;
         $('parent-dir-btn').disabled = !data.parent_path;
-        $('file-preview-box').hidden = true;
+        renderActiveFilePreview();
         renderFileEntries(data.entries);
     } catch (error) {
         showToast(error.message, 'error');
     }
+}
+
+async function collectFileSearchEntries(rootPath, query, requestId) {
+    const pendingPaths = [rootPath];
+    const visitedPaths = new Set();
+    const entries = [];
+    const normalizedQuery = query.toLocaleLowerCase();
+    let truncated = false;
+    const maxDirectories = 10000;
+    const maxResults = 1000;
+
+    for (let nextPathIndex = 0; nextPathIndex < pendingPaths.length; nextPathIndex += 1) {
+        if (requestId !== state.files.searchRequestId) return null;
+        if (visitedPaths.size >= maxDirectories) {
+            truncated = true;
+            break;
+        }
+
+        const currentPath = pendingPaths[nextPathIndex];
+        if (visitedPaths.has(currentPath)) continue;
+        visitedPaths.add(currentPath);
+        const listing = await apiJson(
+            `/api/files?path=${encodeURIComponent(currentPath)}`,
+            undefined,
+            'Unable to search files',
+        );
+        if (!Array.isArray(listing.entries)) {
+            throw new Error('Unable to search files: directory listing is invalid');
+        }
+
+        for (const entry of listing.entries) {
+            const name = String(entry.name || '').replace(/[\\/]+$/, '');
+            if (!name || name.startsWith('.venv') || name === '__pycache__' || entry.is_symlink) continue;
+            if (entry.is_dir) pendingPaths.push(entry.path);
+
+            if (!name.toLocaleLowerCase().includes(normalizedQuery)) continue;
+            if (entries.length >= maxResults) {
+                truncated = true;
+                break;
+            }
+            const rootPrefix = rootPath.endsWith('/') || rootPath.endsWith('\\')
+                ? rootPath
+                : `${rootPath}${rootPath.includes('\\') && !rootPath.includes('/') ? '\\' : '/'}`;
+            const relativePath = entry.path.startsWith(rootPrefix)
+                ? entry.path.slice(rootPrefix.length).replace(/\\/g, '/')
+                : name;
+            entries.push({
+                ...entry,
+                name,
+                relative_path: relativePath,
+            });
+        }
+        if (truncated) break;
+    }
+
+    entries.sort((left, right) => {
+        if (left.is_dir !== right.is_dir) return left.is_dir ? -1 : 1;
+        return left.relative_path.localeCompare(right.relative_path);
+    });
+    return { entries, truncated };
 }
 
 async function searchFileEntries(query, requestId) {
@@ -2025,9 +2355,14 @@ async function searchFileEntries(query, requestId) {
             'Unable to search files',
         );
         if (requestId !== state.files.searchRequestId || (rootPath && rootPath !== state.files.path)) return;
-        if (!state.files.path) state.files.path = data.current_path;
+        const searchRootPath = state.files.path || data.current_path;
+        if (!state.files.path) state.files.path = searchRootPath;
+        const results = data.recursive === true
+            ? { entries: data.entries, truncated: data.truncated }
+            : await collectFileSearchEntries(searchRootPath, query, requestId);
+        if (!results || requestId !== state.files.searchRequestId || searchRootPath !== state.files.path) return;
         $('file-preview-box').hidden = true;
-        renderFileEntries(data.entries, { searchResult: true, truncated: data.truncated });
+        renderFileEntries(results.entries, { searchResult: true, truncated: results.truncated });
     } catch (error) {
         if (requestId === state.files.searchRequestId) showToast(error.message, 'error');
     }
@@ -2045,16 +2380,34 @@ function queueFileSearch() {
     state.files.searchTimer = window.setTimeout(() => searchFileEntries(query, requestId), 220);
 }
 
-async function deleteFileEntry(entry) {
-    const contents = entry.is_dir ? ' and everything inside it' : '';
-    if (!confirm(`Delete ${entry.name}${contents}? This cannot be undone.`)) return;
+function deleteFileEntry(entry) {
+    state.files.pendingDelete = entry;
+    $('file-delete-title').textContent = entry.is_dir ? 'Delete this folder?' : 'Delete this file?';
+    $('file-delete-name').textContent = entry.name;
+    $('file-delete-description').firstChild.textContent = entry.is_dir
+        ? 'Permanently remove this folder and everything inside it: '
+        : 'Permanently remove this file: ';
+    $('file-delete-confirm').textContent = entry.is_dir ? 'Delete folder' : 'Delete file';
+    $('file-delete-confirm').disabled = false;
+    $('file-delete-dialog').showModal();
+}
+
+async function confirmDeleteFileEntry(event) {
+    event.preventDefault();
+    const entry = state.files.pendingDelete;
+    if (!entry) return;
+    const button = $('file-delete-confirm');
+    button.disabled = true;
+    button.textContent = 'Deleting…';
     try {
         await apiJson('/api/files/delete', jsonOptions('POST', {
             path: entry.path,
             current_path: state.files.path,
         }), 'Unable to delete item');
+        $('file-delete-dialog').close();
+        state.files.pendingDelete = null;
         showToast(`Deleted ${entry.name}`);
-        $('file-preview-box').hidden = true;
+        removeDeletedFilePreviews(entry);
         if (state.files.query) {
             const requestId = ++state.files.searchRequestId;
             await searchFileEntries(state.files.query, requestId);
@@ -2062,22 +2415,131 @@ async function deleteFileEntry(entry) {
             await loadFiles(state.files.path);
         }
     } catch (error) {
+        $('file-delete-dialog').close();
+        state.files.pendingDelete = null;
         showToast(error.message, 'error');
+    } finally {
+        button.disabled = false;
     }
 }
 
+function getPreviewFileName(path) {
+    return String(path).split(/[\\/]/).filter(Boolean).pop() || String(path);
+}
+
+function renderFileTabs() {
+    const tabs = state.files.previews.map(preview => {
+        const fileName = getPreviewFileName(preview.path);
+        const selected = preview.path === state.files.activePreviewPath;
+        const tab = h('button', {
+            type: 'button',
+            role: 'tab',
+            class: 'file-preview-tab',
+            'aria-selected': String(selected),
+            tabindex: selected ? '0' : '-1',
+            'aria-controls': 'file-preview-content',
+            title: preview.path,
+            'data-file-preview-select': preview.path,
+        },
+            h('span', { 'aria-hidden': 'true', html: ICONS.file }),
+            h('span', { class: 'file-preview-name', text: fileName }));
+        const close = h('button', {
+            type: 'button',
+            class: 'file-preview-close',
+            'aria-label': `Close ${fileName}`,
+            title: `Close ${fileName}`,
+            'data-file-preview-close': preview.path,
+            html: ICONS.x,
+        });
+        return h('div', { class: `file-preview-tab-item${selected ? ' is-active' : ''}` }, tab, close);
+    });
+    $('file-preview-tabs').replaceChildren(...tabs);
+}
+
+function renderActiveFilePreview() {
+    const preview = state.files.previews.find(file => file.path === state.files.activePreviewPath);
+    const box = $('file-preview-box');
+    if (!preview) {
+        box.hidden = true;
+        return;
+    }
+    const lines = preview.content.split('\n');
+    $('file-preview-lines').textContent = lines.map((_, index) => index + 1).join('\n');
+    $('file-preview-content').textContent = preview.content;
+    $('file-preview-content').setAttribute('aria-label', `${getPreviewFileName(preview.path)} contents`);
+    box.hidden = false;
+}
+
+function renderFilePreview(content, path, activate = true) {
+    const fullPath = String(path);
+    const existing = state.files.previews.find(file => file.path === fullPath);
+    if (existing) existing.content = String(content);
+    else state.files.previews.push({ path: fullPath, content: String(content) });
+    if (activate) state.files.activePreviewPath = fullPath;
+    renderFileTabs();
+    renderActiveFilePreview();
+}
+
+function focusActiveFilePreviewTab() {
+    const activeTab = [...$('file-preview-tabs').querySelectorAll('[role="tab"]')]
+        .find(tab => tab.dataset.filePreviewSelect === state.files.activePreviewPath);
+    if (activeTab) activeTab.focus();
+    return Boolean(activeTab);
+}
+
+function selectFilePreview(path) {
+    if (!state.files.previews.some(file => file.path === path)) return;
+    state.files.activePreviewPath = path;
+    renderFileTabs();
+    renderActiveFilePreview();
+    focusActiveFilePreviewTab();
+}
+
+function closeFilePreview(path) {
+    const index = state.files.previews.findIndex(file => file.path === path);
+    if (index < 0) return;
+    const wasActive = state.files.activePreviewPath === path;
+    state.files.previews.splice(index, 1);
+    if (wasActive) {
+        state.files.activePreviewPath = state.files.previews[Math.min(index, state.files.previews.length - 1)]?.path || '';
+    }
+    renderFileTabs();
+    renderActiveFilePreview();
+    if (!focusActiveFilePreviewTab()) $('file-search').focus();
+}
+
+function removeDeletedFilePreviews(entry) {
+    const root = String(entry.path).replace(/[\\/]+$/, '');
+    const previousActiveIndex = state.files.previews.findIndex(file => file.path === state.files.activePreviewPath);
+    state.files.previews = state.files.previews.filter(file => {
+        if (file.path === root) return false;
+        return !entry.is_dir
+            || (!file.path.startsWith(`${root}/`) && !file.path.startsWith(`${root}\\`));
+    });
+    if (!state.files.previews.some(file => file.path === state.files.activePreviewPath)) {
+        state.files.activePreviewPath = state.files.previews[
+            Math.min(Math.max(previousActiveIndex, 0), state.files.previews.length - 1)
+        ]?.path || '';
+    }
+    renderFileTabs();
+    renderActiveFilePreview();
+}
+
 async function previewFile(path) {
+    const existing = state.files.previews.find(file => file.path === path);
+    if (existing) {
+        state.files.previewRequestId += 1;
+        selectFilePreview(path);
+        return;
+    }
+    const requestId = ++state.files.previewRequestId;
     try {
         const data = await apiJson(`/api/file/content?path=${encodeURIComponent(path)}`, undefined, 'Unable to preview file');
-        const box = $('file-preview-box');
-        box.textContent = data.content;
-        box.hidden = false;
+        renderFilePreview(data.content, data.path || path, requestId === state.files.previewRequestId);
     } catch (error) {
         // The backend reports oversize files as { content: "File too large…" } with HTTP 400.
         if (error.data?.content) {
-            const box = $('file-preview-box');
-            box.textContent = error.data.content;
-            box.hidden = false;
+            renderFilePreview(error.data.content, path, requestId === state.files.previewRequestId);
         } else {
             showToast(error.message, 'error');
         }
@@ -2097,15 +2559,16 @@ function setModelStatus(status, { model, hint = '' } = {}) {
 }
 
 async function checkAssistantHealth() {
+    setModelStatus('busy', { hint: 'Checking Hermes connection' });
     try {
-        const { data } = await fetchJson('/api/assistant/health');   // 503 bodies still carry { available, error }
+        const { data } = await fetchJson('/api/assistant/health', { cache: 'no-store' });   // 503 bodies still carry { available, error }
         if (data.available) {
             const parts = [data.version ? `Hermes ${data.version}` : '', data.telegram_bot ? `Telegram: ${data.telegram_bot}` : ''].filter(Boolean);
-            setModelStatus('ready', { model: data.model, hint: parts.join(' \u00b7 ') });
+            setModelStatus('connected', { model: data.model, hint: parts.join(' \u00b7 ') });
         }
-        else setModelStatus('offline', { model: data.model, hint: data.error || 'Hermes is unavailable' });
+        else setModelStatus('error', { model: data.model, hint: data.error || 'Hermes is unavailable' });
     } catch (error) {
-        setModelStatus('offline', { hint: error.message });
+        setModelStatus('error', { hint: error.message });
     }
 }
 
@@ -2119,9 +2582,11 @@ function setDrawerOpen(open) {
 function toggleSidebar() {
     if (MOBILE_QUERY.matches) return setDrawerOpen(false);
     const collapsed = sidebar().classList.toggle('collapsed');
+    $('assistant-chat').classList.toggle('sidebar-collapsed', collapsed);
     const button = $('sidebar-toggle-btn');
-    button.textContent = collapsed ? '❯' : '❮';
+    button.innerHTML = ICONS[collapsed ? 'chevronRight' : 'chevronLeft'];
     button.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    button.setAttribute('aria-label', button.title);
     if (collapsed) sidebar().classList.remove('settings-open');
 }
 
@@ -2179,7 +2644,8 @@ function renderSessionList(sessions) {
         list.replaceChildren(h('div', { class: 'assistant-session-empty', text: 'No chats yet' }));
         return;
     }
-    list.replaceChildren(...sessions.map(session => {
+    const newestFirst = [...sessions].reverse();
+    list.replaceChildren(...newestFirst.map(session => {
         const label = session.title || session.id || 'Session';
         const item = h('div', { class: 'assistant-session-item', 'data-session-id': session.id },
             h('span', { class: 'session-title', text: label, title: label }),
@@ -2439,15 +2905,22 @@ function renderModelList(filter) {
 }
 
 function openModelList(filter) {
-    if (!assistant.modelOptions.length) return;
+    if (!assistant.modelOptions.length) {
+        closeModelList();
+        return;
+    }
     renderModelList(filter);
-    $('assistant-model-list').classList.add('open');
+    const list = $('assistant-model-list');
+    list.hidden = false;
+    list.classList.add('open');
     $('assistant-model').setAttribute('aria-expanded', 'true');
-    $('assistant-model-list').querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
+    list.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
 }
 
 function closeModelList() {
-    $('assistant-model-list').classList.remove('open');
+    const list = $('assistant-model-list');
+    list.classList.remove('open');
+    list.hidden = true;
     $('assistant-model').setAttribute('aria-expanded', 'false');
     assistant.modelActive = -1;
 }
@@ -2486,15 +2959,13 @@ function onModelKeydown(event) {
 async function fetchModels() {
     const provider = $('assistant-provider-select').value;
     const baseUrl = $('assistant-base-url').value.trim();
-    const status = $('assistant-settings-status');
     if (provider === 'custom' && !baseUrl) {
-        status.textContent = 'Enter a base URL first';
+        showToast('Enter a base URL first', 'error');
         $('assistant-base-url').focus();
         return;
     }
     const button = $('assistant-fetch-btn');
     button.textContent = 'Fetching...';
-    status.textContent = 'Fetching models...';
     await withBusy(button, async () => {
         try {
             const data = await apiJson('/api/assistant/models', jsonOptions('POST', {
@@ -2504,25 +2975,21 @@ async function fetchModels() {
             }), 'Model fetch failed');
             const models = Array.isArray(data.models) ? data.models : [];
             setModelOptions(models);
-            status.textContent = models.length ? `Loaded ${models.length} models - pick one or type your own` : 'Provider returned no models';
             if (models.length) {
                 $('assistant-model').focus();
                 openModelList(false);
             }
         } catch (error) {
-            status.textContent = error.message;
             showToast(error.message, 'error');
         } finally {
-            button.textContent = '↻ Fetch';
+            button.innerHTML = `${ICONS.refreshCw}<span>Fetch</span>`;
         }
     });
 }
 
 async function saveProvider() {
     const provider = $('assistant-provider-select').value;
-    const status = $('assistant-settings-status');
-    status.textContent = 'Saving and restarting Hermes...';
-    setModelStatus('checking', { hint: 'Restarting Hermes' });
+    setModelStatus('busy', { hint: 'Restarting Hermes' });
     await withBusy($('assistant-save-btn'), async () => {
         try {
             await apiJson('/api/assistant/settings/model', jsonOptions('POST', {
@@ -2531,12 +2998,10 @@ async function saveProvider() {
                 api_key: $('assistant-api-key').value.trim(),
                 model: $('assistant-model').value.trim(),
             }, { 'X-CSRF-Token': await assistantCsrf() }), 'Save failed');
-            status.textContent = 'Saved and Hermes restarted';
             $('assistant-api-key').value = '';
             showToast(`${provider} configured.`);
             loadCurrentSettings();
         } catch (error) {
-            status.textContent = error.message;
             showToast(error.message, 'error');
         } finally {
             checkAssistantHealth();
@@ -2553,12 +3018,12 @@ function renderMessages() {
         const group = h('div', { class: `assistant-message-group ${message.role}` },
             messageElement,
             h('button', {
-                class: 'assistant-message-action', type: 'button', title: 'Copy message', 'aria-label': 'Copy message', text: '⧉',
+                class: 'assistant-message-action', type: 'button', title: 'Copy message', 'aria-label': 'Copy message', html: ICONS.copy,
                 onclick: () => copyText(message.content, 'Message copied to clipboard!'),
             }));
         if (message.role === 'assistant') {
             group.append(h('button', {
-                class: 'assistant-message-action', type: 'button', title: 'Regenerate response', 'aria-label': 'Regenerate response', text: '↻',
+                class: 'assistant-message-action', type: 'button', title: 'Regenerate response', 'aria-label': 'Regenerate response', html: ICONS.refreshCw,
                 onclick: () => regenerate(index),
             }));
         }
@@ -2571,9 +3036,14 @@ function renderMessages() {
 function setBusy(busy) {
     const button = $('assistant-send');
     button.classList.toggle('btn-start', !busy);
-    button.classList.toggle('btn-stop', busy);
-    button.textContent = busy ? '■ Stop' : '➤ Send';
+    button.classList.toggle('btn-delete', busy);
+    button.classList.toggle('is-busy', busy);
+    button.innerHTML = busy
+        ? `${ICONS.square}<span>Stop</span>`
+        : ICONS.sendHorizontal;
     button.title = busy ? 'Stop response' : 'Send message';
+    button.setAttribute('aria-label', busy ? 'Stop response' : 'Send message');
+    if (busy) setModelStatus('busy', { hint: 'Assistant request in progress' });
 }
 
 function onSendClick() {
@@ -2612,6 +3082,7 @@ async function readReplyStream(response, message, progress) {
             if (data.error) {
                 const reason = typeof data.error === 'string' ? data.error : data.error.message;
                 message.content = `Assistant error: ${reason || 'Hermes returned an error.'}`;
+                setModelStatus('error', { hint: reason || 'Hermes returned an error' });
                 setActivity('Hermes request failed');
                 progress.failed = true;
                 renderMessages();
@@ -2636,6 +3107,7 @@ async function sendMessage(reuseLastUserMessage = false) {
     const content = reuseLastUserMessage && last?.role === 'user' ? last.content : input.value.trim();
     if (!content || assistant.abort) return;
     input.value = '';
+    resizeAssistantInput();
 
     if (!reuseLastUserMessage) assistant.messages.push({ role: 'user', content });
     const reply = { role: 'assistant', content: 'Sending to Hermes...' };
@@ -2649,6 +3121,7 @@ async function sendMessage(reuseLastUserMessage = false) {
     setBusy(true);
 
     const progress = { started: false, failed: false };
+    let assistantRequestWasAborted = false;
     let sessionForRequest = '';
     const slowTimer = setTimeout(() => {
         if (progress.started) return;
@@ -2688,19 +3161,25 @@ async function sendMessage(reuseLastUserMessage = false) {
         renderMessages();
         await readReplyStream(response, reply, progress);
         if (!progress.started && !progress.failed) {
-            reply.content = 'Hermes returned no response. Check Logs → Hermes Gateway.';
+            reply.content = 'Hermes returned no response. Check Logs, then Hermes Gateway.';
+            setModelStatus('error', { hint: 'Hermes returned no response' });
             renderMessages();
             setActivity('No response received');
         } else if (progress.started) {
+            if (!progress.failed) setModelStatus('connected');
             setActivity();
         }
     } catch (error) {
         if (error.name !== 'AbortError') {
             reply.content = `Assistant error: ${error.message}`;
+            setModelStatus('error', { hint: error.message });
             renderMessages();
-        } else if (!progress.started) {
-            reply.content = 'Stopped.';
-            renderMessages();
+        } else {
+            assistantRequestWasAborted = true;
+            if (!progress.started) {
+                reply.content = 'Stopped.';
+                renderMessages();
+            }
         }
     } finally {
         clearTimeout(slowTimer);
@@ -2709,6 +3188,7 @@ async function sendMessage(reuseLastUserMessage = false) {
             assistant.requestId = '';
         }
         setBusy(!!assistant.abort);
+        if (assistantRequestWasAborted) checkAssistantHealth();
         if (sessionForRequest) await finalizeSessionTurn(sessionForRequest, progress.started, content);
     }
 }
@@ -2721,6 +3201,12 @@ async function regenerate(index) {
 }
 
 /* 6f. Composer keyboard: Enter sends, Shift+Enter adds a line */
+function resizeAssistantInput() {
+    const input = $('assistant-input');
+    input.style.height = '34px';
+    input.style.height = `${Math.max(34, Math.min(input.scrollHeight, 174))}px`;
+}
+
 function onInputKeydown(event) {
     if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
@@ -2840,6 +3326,39 @@ function bindEvents() {
         $('bot-delete-dialog').close();
         state.deleteBotId = null;
     });
+    $('file-delete-form').addEventListener('submit', confirmDeleteFileEntry);
+    $('file-delete-cancel').addEventListener('click', () => {
+        $('file-delete-dialog').close();
+        state.files.pendingDelete = null;
+    });
+    $('file-delete-dialog').addEventListener('cancel', () => {
+        state.files.pendingDelete = null;
+    });
+    $('file-preview-tabs').addEventListener('click', event => {
+        const close = event.target.closest('[data-file-preview-close]');
+        if (close) {
+            event.stopPropagation();
+            closeFilePreview(close.dataset.filePreviewClose);
+            return;
+        }
+        const tab = event.target.closest('[data-file-preview-select]');
+        if (tab) selectFilePreview(tab.dataset.filePreviewSelect);
+    });
+    $('file-preview-tabs').addEventListener('keydown', event => {
+        const currentTab = event.target.closest('[data-file-preview-select]');
+        if (!currentTab) return;
+        const tabs = [...$('file-preview-tabs').querySelectorAll('[data-file-preview-select]')];
+        const index = tabs.indexOf(currentTab);
+        let nextIndex = index;
+        if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
+        else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        const nextTab = tabs[nextIndex];
+        selectFilePreview(nextTab.dataset.filePreviewSelect);
+    });
     $('bot-repository').addEventListener('input', () => queueRepositoryMetadata({ includeBranches: true }));
     $('bot-repository').addEventListener('change', () => queueRepositoryMetadata({ includeBranches: true, delay: 0 }));
     $('bot-pat').addEventListener('input', () => queueRepositoryMetadata({ includeBranches: true }));
@@ -2911,7 +3430,13 @@ function bindEvents() {
 
     // Assistant: chat
     $('assistant-send').addEventListener('click', onSendClick);
-    $('assistant-input').addEventListener('keydown', onInputKeydown);
+    const assistantInput = $('assistant-input');
+    assistantInput.addEventListener('input', resizeAssistantInput);
+    assistantInput.addEventListener('keydown', onInputKeydown);
+
+    $('bot-update-form').addEventListener('submit', confirmUpdateBot);
+    $('bot-update-cancel').addEventListener('click', cancelUpdateBot);
+    $('bot-update-dialog').addEventListener('close', () => { state.updateBotId = null; });
 }
 
 function startPolling() {
@@ -2924,6 +3449,7 @@ function startPolling() {
 }
 
 bindEvents();
+renderStaticIcons();
 startPolling();
 refreshStatus();
 refreshInstallJobs();

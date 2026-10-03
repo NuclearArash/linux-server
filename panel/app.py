@@ -3,6 +3,7 @@ import re
 import time
 import signal
 import secrets
+import logging
 import shutil
 import stat
 import sys
@@ -99,12 +100,19 @@ SERVER_SECRET_KEYS = [
     "SERVER_USERNAME",
     "SERVER_PASSWORD",
     "STATUS_BOT_TOKEN",
-    "STATUS_CHAT_ID",
+    "OWNER_ID",
     "HERMES_API_SERVER_KEY",
     "HERMES_TELEGRAM_BOT_TOKEN",
     "API_KEY_9ROUTER",
-    "TAILSCALE_AUTHKEY",
 ]
+STATUS_BOT_LOG_PATH = "/tmp/status-bot.log"
+SERVICE_LOG_PATHS = {
+    "panel": "/tmp/panel.log",
+    "hermes": "/tmp/hermes.log",
+    "status-bot": STATUS_BOT_LOG_PATH,
+    "9router": "/tmp/9router.log",
+}
+STATUS_BOT_LOGGER = logging.getLogger("server.status_bot")
 
 BOT_RESTART_COUNTS = {}
 BOT_REGISTRY_LOCK = Lock()
@@ -278,7 +286,7 @@ def _record_bot_job(job_id, status, progress, message, **extra):
         return job
 
 
-def _queue_bot_install(definition, pat, environment, job_id=None, operation="install", worker=None):
+def _queue_bot_install(definition, pat, environment, job_id=None, operation="install", worker=None, restart_after_update=False):
     job_id = job_id or secrets.token_hex(8)
     safe_definition = dict(definition)
     with BOT_INSTALL_JOBS_LOCK:
@@ -286,6 +294,7 @@ def _queue_bot_install(definition, pat, environment, job_id=None, operation="ins
             "definition": safe_definition,
             "pat": pat,
             "environment": dict(environment),
+            "restart_after_update": bool(restart_after_update),
         }
         job = BOT_INSTALL_JOBS.get(job_id)
         if job:
@@ -302,7 +311,10 @@ def _queue_bot_install(definition, pat, environment, job_id=None, operation="ins
         definition=safe_definition,
     )
     worker = worker or _run_bot_install
-    thread = threading.Thread(target=worker, args=(job_id, safe_definition, pat, environment), daemon=True)
+    worker_args = (job_id, safe_definition, pat, environment)
+    if operation == "update":
+        worker_args += (bool(restart_after_update),)
+    thread = threading.Thread(target=worker, args=worker_args, daemon=True)
     thread.start()
     with BOT_INSTALL_JOBS_LOCK:
         return dict(BOT_INSTALL_JOBS[job_id])
@@ -375,7 +387,7 @@ def _validate_repo_entrypoint(repo_dir, entrypoint):
     return resolved_path
 
 
-def _run_bot_update(job_id, definition, pat, environment):
+def _run_bot_update(job_id, definition, pat, environment, restart_after_update=False):
     if job_id not in BOT_INSTALL_JOBS:
         return
 
@@ -422,14 +434,16 @@ def _run_bot_update(job_id, definition, pat, environment):
         if backup_created:
             shutil.rmtree(backup_dir, ignore_errors=True)
             backup_created = False
-        start_status, start_message = start_bot_process(bot_id, definition)
-        if start_status != 200:
-            raise RuntimeError(f"Bot updated successfully but automatic restart failed: {start_message}")
+        if restart_after_update:
+            start_status, start_message = start_bot_process(bot_id, definition)
+            if start_status != 200:
+                raise RuntimeError(f"Bot updated successfully but automatic restart failed: {start_message}")
+        success_message = "Bot updated and restarted successfully." if restart_after_update else "Bot updated successfully; it remains stopped."
         _record_bot_job(
             job_id,
             "success",
             100,
-            "Bot updated and restarted successfully.",
+            success_message,
             step="complete",
             bot_id=bot_id,
             bot_name=definition["name"],
@@ -808,7 +822,7 @@ def format_uptime(seconds):
 
 def send_telegram_msg(message, target_chat_id=None):
     token = os.environ.get("STATUS_BOT_TOKEN")
-    chat_id = target_chat_id or os.environ.get("STATUS_CHAT_ID")
+    chat_id = target_chat_id or os.environ.get("OWNER_ID")
     if not token or not chat_id:
         return
     
@@ -823,7 +837,22 @@ def send_telegram_msg(message, target_chat_id=None):
         req = urllib.request.Request(url, data=data, method="POST")
         urllib.request.urlopen(req, timeout=10)
     except Exception as e:
-        print(f"Failed to send Telegram message: {e}")
+        configure_status_bot_logger().warning(
+            "Telegram message delivery failed (%s).", type(e).__name__
+        )
+
+def configure_status_bot_logger():
+    STATUS_BOT_LOGGER.setLevel(logging.INFO)
+    STATUS_BOT_LOGGER.propagate = False
+    log_path = os.path.abspath(STATUS_BOT_LOG_PATH)
+    if not any(
+        getattr(handler, "baseFilename", None) == log_path
+        for handler in STATUS_BOT_LOGGER.handlers
+    ):
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        STATUS_BOT_LOGGER.addHandler(handler)
+    return STATUS_BOT_LOGGER
 
 def trigger_github_redeploy(source="User"):
     pat = os.environ.get("GH_PAT")
@@ -871,14 +900,15 @@ def trigger_github_redeploy(source="User"):
     return dispatched
 
 def telegram_poll_worker():
+    logger = configure_status_bot_logger()
     token = os.environ.get("STATUS_BOT_TOKEN")
-    allowed_chat_id = str(os.environ.get("STATUS_CHAT_ID", ""))
+    allowed_chat_id = str(os.environ.get("OWNER_ID", ""))
     if not token or not allowed_chat_id:
-        print("Telegram bot listener skipped: STATUS_BOT_TOKEN or STATUS_CHAT_ID missing.")
+        logger.warning("Telegram command listener skipped because configuration is missing.")
         return
 
     offset = 0
-    print("Starting Telegram command listener...")
+    logger.info("Telegram command listener started.")
     while True:
         try:
             url = f"https://api.telegram.org/bot{token}/getUpdates?offset={offset}&timeout=20"
@@ -896,15 +926,18 @@ def telegram_poll_worker():
 
                     if chat_id != allowed_chat_id:
                         send_telegram_msg("🔒 This bot is private.", target_chat_id=chat_id)
+                        logger.warning("Ignored Telegram update from an unauthorized chat.")
                         continue
 
                     cmd = text.split()[0].lower() if text else ""
 
                     if cmd in ["/redeploy", "/restart"]:
+                        logger.info("Processing redeploy command.")
                         send_telegram_msg("⏳ <b>Triggering Server Redeploy...</b>\nStarting fresh GitHub runner instance with latest repository code.")
                         trigger_github_redeploy(source="Telegram /redeploy")
 
                     elif cmd in ["/status", "/ping"]:
+                        logger.info("Processing status command.")
                         cpu = psutil.cpu_percent(interval=0.2)
                         ram = psutil.virtual_memory()
                         cf_url = get_panel_url()
@@ -931,14 +964,17 @@ def telegram_poll_worker():
                         send_telegram_msg(status_msg)
 
                     elif cmd == "/panel":
+                        logger.info("Processing panel command.")
                         cf_url = get_panel_url()
                         send_telegram_msg(f"🌐 <b>Web Control Panel:</b>\n<a href=\"{cf_url}\">{cf_url}</a>")
 
                     elif cmd in ["/ssh", "/terminal", "/sshx"]:
+                        logger.info("Processing SSH command.")
                         ssh_cmd = get_ssh_cmd()
                         send_telegram_msg(f"💻 <b>SSH Terminal Access:</b>\n<code>{ssh_cmd}</code>")
 
                     elif cmd in ["/help", "/start"]:
+                        logger.info("Processing help command.")
                         help_msg = (
                             "<b>🤖 Server Control Commands:</b>\n\n"
                             "🔄 <code>/redeploy</code> - Trigger fresh workflow run & update server\n"
@@ -949,6 +985,7 @@ def telegram_poll_worker():
                         send_telegram_msg(help_msg)
 
         except Exception as e:
+            logger.warning("Telegram polling request failed (%s).", type(e).__name__)
             time.sleep(5)
 
 @app.route("/login", methods=["GET", "POST"])
@@ -1279,16 +1316,11 @@ def redeploy_server():
 @app.route("/api/logs/<bot_key>")
 @login_required
 def get_logs(bot_key):
-    log_paths = {
-        "panel": "/tmp/panel.log",
-        "hermes": "/tmp/hermes.log",
-        "9router": "/tmp/9router.log"
-    }
     definition = get_bot_definition(bot_key)
-    if definition is None and bot_key not in log_paths:
+    if definition is None and bot_key not in SERVICE_LOG_PATHS:
         return jsonify({"error": "Unknown log target"}), 404
 
-    log_path = log_paths[bot_key] if bot_key in log_paths else get_bot_info(definition)["log_path"]
+    log_path = SERVICE_LOG_PATHS[bot_key] if bot_key in SERVICE_LOG_PATHS else get_bot_info(definition)["log_path"]
     try:
         lines = max(1, min(int(request.args.get("lines", 200)), 1000))
     except ValueError:
@@ -1307,7 +1339,9 @@ def get_logs(bot_key):
 @login_required
 def get_env(env_key):
     if env_key == "server-secrets":
-        values = {key: os.environ.get(key, "") for key in SERVER_SECRET_KEYS if os.environ.get(key) is not None}
+        values = {key: os.environ.get(key, "") for key in SERVER_SECRET_KEYS}
+        if os.environ.get("TAILSCALE_AUTHKEY") is not None:
+            values["TAILSCALE_AUTHKEY"] = os.environ["TAILSCALE_AUTHKEY"]
         return jsonify({"env": values, "count": len(values)})
 
     registry = get_bot_registry()
@@ -1638,6 +1672,7 @@ def update_bot(bot_key):
             credentials = get_bot_credentials(registry, bot_key, BOT_CREDENTIALS_KEY)
         except ValueError:
             return jsonify({"error": "Bot credentials are unavailable"}), 503
+        restart_after_update = get_bot_proc(bot_key) is not None
         if not stop_bot_process(bot_key, definition):
             return jsonify({"error": "Bot could not be stopped; update was not started"}), 503
 
@@ -1655,6 +1690,7 @@ def update_bot(bot_key):
             credentials["environment"],
             operation="update",
             worker=_run_bot_update,
+            restart_after_update=restart_after_update,
         )
     return jsonify({"success": True, "job": job}), 202
 
@@ -1692,6 +1728,7 @@ def retry_bot_install_job(job_id):
             "definition": dict(saved_input["definition"]),
             "pat": saved_input["pat"],
             "environment": dict(saved_input["environment"]),
+            "restart_after_update": bool(saved_input.get("restart_after_update", False)),
         }
 
     payload = request.get_json(silent=True)
@@ -1721,7 +1758,15 @@ def retry_bot_install_job(job_id):
         return jsonify({"error": str(error)}), 400
 
     worker = _run_bot_update if operation == "update" else _run_bot_install
-    job = _queue_bot_install(definition, pat, environment, job_id=job_id, operation=operation, worker=worker)
+    job = _queue_bot_install(
+        definition,
+        pat,
+        environment,
+        job_id=job_id,
+        operation=operation,
+        worker=worker,
+        restart_after_update=saved_input["restart_after_update"],
+    )
     return jsonify({"success": True, "job": job}), 202
 
 
@@ -1785,6 +1830,7 @@ def list_files():
                 "name": item,
                 "path": full_path,
                 "is_dir": is_dir,
+                "is_symlink": os.path.islink(full_path),
                 "size_bytes": size
             })
         
@@ -1885,7 +1931,12 @@ def search_files():
         return jsonify({"error": "Could not search this directory"}), 403
 
     entries.sort(key=lambda entry: (0 if entry["is_dir"] else 1, entry["relative_path"].lower()))
-    return jsonify({"current_path": target_path, "entries": entries, "truncated": truncated})
+    return jsonify({
+        "current_path": target_path,
+        "entries": entries,
+        "truncated": truncated,
+        "recursive": True,
+    })
 
 
 @app.route("/api/files/delete", methods=["POST"])

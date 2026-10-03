@@ -62,7 +62,7 @@ jobs:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
           GH_PAT: ${{ secrets.GH_PAT }}
           STATUS_BOT_TOKEN: ${{ secrets.STATUS_BOT_TOKEN }}
-          STATUS_CHAT_ID: ${{ secrets.STATUS_CHAT_ID }}
+          OWNER_ID: ${{ secrets.OWNER_ID }}
           HERMES_TELEGRAM_BOT_TOKEN: ${{ secrets.HERMES_TELEGRAM_BOT_TOKEN }}
           HERMES_API_SERVER_KEY: ${{ secrets.HERMES_API_SERVER_KEY }}
           GITHUB_REPO: ${{ github.repository }}
@@ -72,7 +72,7 @@ jobs:
       - name: Send Startup Notification to Telegram
         env:
           STATUS_BOT_TOKEN: ${{ secrets.STATUS_BOT_TOKEN }}
-          STATUS_CHAT_ID: ${{ secrets.STATUS_CHAT_ID }}
+          OWNER_ID: ${{ secrets.OWNER_ID }}
           SERVER_USERNAME: ${{ vars.SERVER_USERNAME || secrets.SERVER_USERNAME || 'admin' }}
         run: ./scripts/heartbeat.sh
 

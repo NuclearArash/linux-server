@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 send_telegram() {
     local MESSAGE="$1"
@@ -10,8 +11,8 @@ send_telegram() {
         return
     fi
 
-    if [ -z "${STATUS_CHAT_ID:-}" ]; then
-        echo "STATUS_CHAT_ID is not configured."
+    if [ -z "${OWNER_ID:-}" ]; then
+        echo "OWNER_ID is not configured."
         return
     fi
 
@@ -19,7 +20,7 @@ send_telegram() {
         --max-time 15 \
         -X POST \
         "https://api.telegram.org/bot${STATUS_BOT_TOKEN}/sendMessage" \
-        --data-urlencode "chat_id=${STATUS_CHAT_ID}" \
+        --data-urlencode "chat_id=${OWNER_ID}" \
         --data-urlencode "text=${MESSAGE}" \
         --data-urlencode "parse_mode=HTML" \
         >/dev/null || true
@@ -84,7 +85,12 @@ case "$SSH_CMD" in
 esac
 
 NOW=$(TZ='Asia/Tehran' date '+%Y-%m-%d %H:%M:%S Tehran')
-STATUS_FLEET="🟢 Dynamic bot fleet: registry-managed"
+BOT_REGISTRY_PATH="${BOT_REGISTRY_PATH:-$HOME/bot-server/bot-registry.json}"
+if ! STATUS_FLEET=$(python3 "$SCRIPT_DIR/bot_fleet_status.py" \
+    --registry "$BOT_REGISTRY_PATH" --pid-directory /tmp); then
+    STATUS_FLEET="🔴 Bot status unavailable (registry read failed)"
+fi
+STATUS_FLEET_PLAIN=$(printf '%s\n' "$STATUS_FLEET" | sed 's/^/    /')
 CPU_INFO=$(get_cpu)
 RAM_INFO=$(get_memory)
 HERMES_STATUS="🔴 Hermes API: UNAVAILABLE"
@@ -122,7 +128,7 @@ PLAIN_MSG="==================================================
   💻 SSH + 9Router tunnel: ${SSH_CMD}${NINEROUTER_PLAIN}
   ------------------------------------------------
   🤖 Bot Status:
-    ${STATUS_FLEET}
+${STATUS_FLEET_PLAIN}
         ${HERMES_STATUS}
         ${HERMES_TELEGRAM_STATUS}
   ------------------------------------------------
