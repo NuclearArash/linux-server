@@ -27,6 +27,8 @@ In your fork, go to **Settings → Secrets and variables → Actions → Reposit
 
 Generate a key locally with `openssl rand -hex 32`, then save the output as `HERMES_API_SERVER_KEY`.
 
+Hermes Agent is installed from a pinned upstream commit so runner setup is reproducible and is not affected by unverified upstream changes. The current pin works around an upstream web UI TypeScript build failure ([upstream report](https://github.com/NousResearch/hermes-agent/issues/134632)); update `HERMES_COMMIT` in `scripts/setup.sh` only after confirming a newer commit installs and builds successfully.
+
 **Optional features (recommended when you plan to use them)**
 
 | Secret | What it enables |
